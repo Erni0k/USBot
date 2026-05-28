@@ -1,0 +1,20 @@
+# sekrety
+.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# node / next
+node_modules/
+.next/
+out/
+
+# dane i modele (nie wrzucamy do repo)
+data/
+models/
+*.log
+
+.DS_Store
