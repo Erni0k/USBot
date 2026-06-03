@@ -1,8 +1,0 @@
-httpx
-trafilatura
-lxml
-sentence-transformers
-psycopg[binary]
-pgvector
-langchain-text-splitters
-python-dotenv

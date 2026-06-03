@@ -1,7 +1,9 @@
-fastapi
-uvicorn[standard]
 openai
 psycopg[binary]
 pgvector
 sentence-transformers
 python-dotenv
+httpx
+trafilatura
+lxml
+langchain-text-splitters

@@ -7,11 +7,6 @@ __pycache__/
 .venv/
 venv/
 
-# node / next
-node_modules/
-.next/
-out/
-
 # dane i modele (nie wrzucamy do repo)
 data/
 models/
