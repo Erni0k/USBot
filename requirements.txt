@@ -7,3 +7,4 @@ httpx
 trafilatura
 lxml
 langchain-text-splitters
+tqdm

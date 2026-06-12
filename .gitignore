@@ -12,4 +12,7 @@ data/
 models/
 *.log
 
+# mkdocs (zbudowana strona)
+site/
+
 .DS_Store

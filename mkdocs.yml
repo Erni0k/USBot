@@ -1,0 +1,62 @@
+site_name: USBot — Dokumentacja Techniczna
+site_description: Chatbot Uniwersytetu Śląskiego w Katowicach (RAG + lokalny LLM)
+site_author: Uniwersytet Śląski w Katowicach | Projekt zespołowy
+site_url: https://erni0k.github.io/USBot/
+repo_url: https://github.com/Erni0k/USBot
+repo_name: Erni0k/USBot
+copyright: Uniwersytet Śląski w Katowicach — Projekt zespołowy
+
+theme:
+  name: material
+  language: pl
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Tryb ciemny
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Tryb jasny
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Start: index.md
+  - Opis projektu: opis-projektu.md
+  - Architektura: architektura.md
+  - Dokumentacja API: api.md
+  - Instrukcja uruchomienia: uruchomienie.md
+  - Interfejs UI/UX: ui-ux.md
+  - Testy: testy.md
+  - Podsumowanie techniczne: podsumowanie.md
