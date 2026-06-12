@@ -1,14 +1,27 @@
 """Crawler us.edu.pl: sitemap jako ziarno + BFS po linkach do zadanej glebokosci.
 
 Pobieranie stron odbywa sie rownolegle (ThreadPoolExecutor).
+Crawl jest inkrementalny: wysyla naglowki warunkowe (If-None-Match /
+If-Modified-Since) i pomija strony, ktore zwroca 304 Not Modified.
 """
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import NamedTuple
 
 import httpx
 import trafilatura
 from lxml import etree, html as lxml_html
+
+
+class Page(NamedTuple):
+    """Wynik odwiedzenia jednej strony przez crawler."""
+    url: str
+    status: str                  # "modified" | "unchanged" | "error"
+    text: str | None             # tekst tylko gdy status == "modified"
+    etag: str | None
+    last_modified: str | None
+    links: list[str]             # linki na stronie (z cache przy "unchanged")
 
 SITEMAP = "https://us.edu.pl/sitemap.xml"
 NS = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
@@ -103,23 +116,66 @@ def _links_from_html(content: bytes, base_url: str) -> list[str]:
         return []
 
 
-def _fetch(url: str) -> tuple[str, bytes | None]:
-    """Pobiera strone. Zwraca (url, content) lub (url, None) przy bledzie."""
+def _fetch(url: str, cache_entry: dict | None) -> Page:
+    """Pobiera strone z naglowkami warunkowymi.
+
+    Zwraca Page ze statusem:
+    - "unchanged": serwer odpowiedzial 304 (tresc bez zmian) -> linki z cache
+    - "modified":  pobrano swieza tresc
+    - "error":     blad sieci / HTTP 4xx/5xx
+    """
+    headers = dict(HEADERS)
+    if cache_entry:
+        if cache_entry.get("etag"):
+            headers["If-None-Match"] = cache_entry["etag"]
+        if cache_entry.get("last_modified"):
+            headers["If-Modified-Since"] = cache_entry["last_modified"]
+
     try:
-        resp = httpx.get(url, headers=HEADERS, timeout=30, follow_redirects=True)
-        resp.raise_for_status()
-        return url, resp.content
+        resp = httpx.get(url, headers=headers, timeout=30, follow_redirects=True)
     except Exception as e:
         print(f"  pomijam {url}: {e}")
-        return url, None
+        return Page(url, "error", None, None, None, [])
+
+    if resp.status_code == 304:
+        cached_links = (cache_entry or {}).get("links") or []
+        return Page(url, "unchanged", None, None, None, cached_links)
+
+    if resp.status_code >= 400:
+        print(f"  pomijam {url}: HTTP {resp.status_code}")
+        return Page(url, "error", None, None, None, [])
+
+    text = trafilatura.extract(
+        resp.content.decode("utf-8", errors="replace"),
+        include_comments=False,
+        include_tables=True,
+    )
+    links = _links_from_html(resp.content, url)
+    return Page(
+        url,
+        "modified",
+        text,
+        resp.headers.get("etag"),
+        resp.headers.get("last-modified"),
+        links,
+    )
 
 
-def crawl(limit: int = 2000, max_depth: int = 2, workers: int = 6, batch_sleep: float = 0.3):
-    """Generator: BFS po us.edu.pl. Yields (url, text).
+def crawl(
+    limit: int = 2000,
+    max_depth: int = 2,
+    workers: int = 6,
+    batch_sleep: float = 0.3,
+    cache: dict[str, dict] | None = None,
+):
+    """Generator: BFS po us.edu.pl. Yields Page.
 
     Strony pobierane sa rownolegle w paczkach po `workers` sztuk.
-    `batch_sleep` to przerwa miedzy paczkami (grzecznosc wobec serwera).
+    `cache` mapuje url -> {etag, last_modified, links} z poprzedniego crawla;
+    pozwala pomijac niezmienione strony (304) i kontynuowac BFS z cache'owanych
+    linkow. `batch_sleep` to przerwa miedzy paczkami (grzecznosc wobec serwera).
     """
+    cache = cache or {}
     seen: set[str] = set()
     queue: deque[tuple[str, int]] = deque()
 
@@ -129,33 +185,31 @@ def crawl(limit: int = 2000, max_depth: int = 2, workers: int = 6, batch_sleep: 
             seen.add(url)
             queue.append((url, 0))
 
-    yielded = 0
+    visited = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        while queue and yielded < limit:
+        while queue and visited < limit:
             # Pobierz paczke URL-i z kolejki
             batch: list[tuple[str, int]] = []
             while queue and len(batch) < workers:
                 batch.append(queue.popleft())
 
-            futures = {pool.submit(_fetch, url): (url, depth) for url, depth in batch}
+            futures = {
+                pool.submit(_fetch, url, cache.get(url)): depth
+                for url, depth in batch
+            }
 
             for future in as_completed(futures):
-                url, depth = futures[future]
-                _, content = future.result()
-                if content is None:
+                depth = futures[future]
+                page = future.result()
+                if page.status == "error":
                     continue
 
-                text = trafilatura.extract(
-                    content.decode("utf-8", errors="replace"),
-                    include_comments=False,
-                    include_tables=True,
-                )
-                if text:
-                    yield url, text
-                    yielded += 1
+                visited += 1
+                yield page
 
+                # Kontynuuj BFS: linki ze swiezej strony lub z cache (przy 304)
                 if depth < max_depth:
-                    for link in _links_from_html(content, url):
+                    for link in page.links:
                         link = link.rstrip("/")
                         if link not in seen:
                             seen.add(link)

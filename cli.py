@@ -9,6 +9,10 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
+# Model embeddingów jest cache'owany lokalnie po pierwszym pobraniu — pracuj offline.
+# Usuwa ostrzeżenie o HF Hub i zawieszanie przy starcie. Pierwsze pobranie: HF_HUB_OFFLINE=0.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 from dotenv import load_dotenv
 from openai import OpenAI
 import psycopg
@@ -64,6 +68,16 @@ def build_context(chunks: list[dict]) -> str:
     return "\n\n".join(f"[Źródło: {c['url']}]\n{c['content']}" for c in chunks)
 
 
+def build_query(history: list[dict], turns: int = 3) -> str:
+    """Buduje zapytanie do wyszukiwarki z kilku ostatnich pytań użytkownika.
+
+    Krótkie follow-upy ("a wnst?", "dziekanatu tam") same w sobie nic nie znaczą
+    dla wyszukiwarki wektorowej — doklejamy poprzednie pytania, by zachować temat.
+    """
+    user_msgs = [m["content"] for m in history if m["role"] == "user"]
+    return "\n".join(user_msgs[-turns:])
+
+
 def main() -> None:
     client = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
     history: list[dict] = []
@@ -91,7 +105,7 @@ def main() -> None:
         history.append({"role": "user", "content": user_input})
 
         try:
-            chunks = retrieve(user_input)
+            chunks = retrieve(build_query(history))
             context = build_context(chunks)
             messages = [{"role": "system", "content": SYSTEM_PROMPT.format(context=context)}] + history
 
