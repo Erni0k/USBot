@@ -1,5 +1,5 @@
 # US Chatbot
-
+Docs: https://erni0k.github.io/USBot/
 Chatbot dla Uniwersytetu Śląskiego w Katowicach oparty o lokalnie hostowany model
 **Qwen3** + **RAG** (treści ze stron `us.edu.pl`, `usnet.us.edu.pl`, `eduroam.us.edu.pl`
 trzymane w pgvector).
