@@ -34,13 +34,12 @@ FALLBACK_URLS = [
     "https://eduroam.us.edu.pl/",
     # dziekanaty wydziałów
     "https://us.edu.pl/wydzial/wh/dziekanat/",
-    "https://us.edu.pl/wydzial/wnst/dziekanat/",
-    "https://us.edu.pl/wydzial/wpia/dziekanat/",
-    "https://us.edu.pl/wydzial/wmfich/dziekanat/",
-    "https://us.edu.pl/wydzial/winm/dziekanat/",
-    "https://us.edu.pl/wydzial/wt/dziekanat/",
-    "https://us.edu.pl/wydzial/wsne/dziekanat/",
-    "https://us.edu.pl/wydzial/wnoz/dziekanat/",
+    "https://us.edu.pl/wydzial/wnp/student/dziekanat/",
+    "https://us.edu.pl/wydzial/wns/wydzial/struktura/administracja/dziekanat-2/",
+    "https://us.edu.pl/wydzial/wnst/studia/dziekanaty/",
+    "https://us.edu.pl/student/nowy-student/nowy-student-pierwsze-kroki/dziekanaty/dziekanat-wydzialu-prawa-i-administracji/",
+    "https://us.edu.pl/wydzial/wsne/ksztalcenie/student-wydzialu/dziekanat/",
+    "https://us.edu.pl/student/nowy-student/nowy-student-pierwsze-kroki/dziekanaty/dziekanat-wydzialu-teologicznego/",
     # strony ogólne
     "https://us.edu.pl/",
     "https://us.edu.pl/student/",
@@ -179,7 +178,10 @@ def crawl(
     seen: set[str] = set()
     queue: deque[tuple[str, int]] = deque()
 
-    for url in _sitemap_urls(limit) + FALLBACK_URLS:
+    # Kolejnosc crawlowania: najpierw priorytetowe seedy z FALLBACK_URLS
+    # (usnet, eduroam, dziekanaty, strony ogolne), potem reszta z sitemapy.
+    # Kolejnosc na liscie FALLBACK_URLS = priorytet (gora = wczesniej).
+    for url in FALLBACK_URLS + _sitemap_urls(limit):
         url = url.rstrip("/")
         if url not in seen:
             seen.add(url)
