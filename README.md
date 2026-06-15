@@ -106,6 +106,16 @@ Pasek postępu pokazuje `+` (strona nowa/zmieniona) i `=` (bez zmian).
 zmieniło (nagłówki `If-None-Match` / `If-Modified-Since` + hash treści). Pełne
 odświeżenie od zera: `CRAWL_FRESH=true` (czyści `chunks` i `pages`).
 
+**Kolejność i filtrowanie:**
+
+- Najpierw crawlowane są **priorytetowe seedy** (`FALLBACK_URLS` w `scrape.py`:
+  usnet, eduroam, dziekanaty, strony ogólne), dopiero potem reszta z sitemapy.
+  Kolejność na liście = priorytet (góra = wcześniej).
+- Sitemapa jest **filtrowana** — pomijane są bezwartościowe pod-sitemapy
+  (załączniki, multimedia, tagi, kategorie; ~73% sitemapy us.edu.pl), a `page`,
+  `komunikaty` i `jednostki` mają pierwszeństwo przed `post`/`event`. Dzięki temu
+  budżet `CRAWL_LIMIT` trafia najpierw na najcenniejszą treść.
+
 Uruchamiaj okresowo (np. cron raz dziennie) gdy treści na stronie się zmieniają.
 
 ## 5. Uruchomienie
@@ -140,5 +150,7 @@ Wpisz pytanie i naciśnij Enter. Wyjście: `wyjdź` lub Ctrl+C.
 - `.env` **nie trafia do gita** — współdziel tylko `.env.example`.
 - Retrieval bierze pod uwagę kilka ostatnich pytań użytkownika, więc krótkie
   follow-upy („a wnst?", „dziekanatu tam") trafiają we właściwy kontekst.
+- Przy pytaniu o **dziekanat** (godziny, kontakt) bez podania wydziału bot dopytuje,
+  o który wydział chodzi, i wymienia dostępne — zamiast zgadywać.
 - Jeśli strona zniknie z serwisu, jej stare fragmenty zostają w bazie — okresowo
   odpalaj `CRAWL_FRESH=true`, by wyczyścić nieaktualne treści.

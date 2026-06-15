@@ -31,8 +31,12 @@
 - **Retrieval z kontekstem rozmowy** (`build_query`) dla krótkich follow-upów.
 - **Inkrementalny crawler** BFS: requesty warunkowe (304), deduplikacja po hashu,
   aktualizacja per-URL, tabela `pages` jako cache stanu.
+- **Priorytetyzacja crawla**: priorytetowe seedy przed sitemapą oraz filtrowanie
+  bezwartościowych pod-sitemap (załączniki/multimedia/tagi) — ~45,8 tys. → ~10,7 tys. URL-i.
 - **Równoległe pobieranie** (`ThreadPoolExecutor`) + **batch embedding** i batch insert.
 - Crawl wielu domen: `us.edu.pl`, `usnet.us.edu.pl`, `eduroam.us.edu.pl`.
+- **Dopytywanie o dziekanat** — przy pytaniu bez wskazania wydziału bot prosi o
+  doprecyzowanie zamiast zgadywać.
 - Skrypt ingestii z chunkingiem, paskiem postępu (`tqdm`) i trybem `CRAWL_FRESH`.
 - Infrastruktura Docker (PostgreSQL + pgvector) z automatyczną inicjalizacją bazy.
 - Obsługa dwóch backendów LLM: Ollama (CPU/GPU) i vLLM (GPU).

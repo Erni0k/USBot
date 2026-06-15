@@ -35,8 +35,16 @@ generuje odpowiedź strumieniowo.
 ## 2.2 Crawler — przepływ ingestii
 
 Crawler (`ingestion/scrape.py`) robi **BFS** po dozwolonych domenach, startując od
-sitemapy i listy seedów (m.in. dziekanaty, usnet, eduroam). Kluczowe mechanizmy:
+priorytetowych seedów i sitemapy. Kluczowe mechanizmy:
 
+- **Priorytet seedów** — najpierw kolejkowane są strony z `FALLBACK_URLS` (usnet,
+  eduroam, dziekanaty, strony ogólne), dopiero potem URL-e z sitemapy. Kolejność na
+  liście `FALLBACK_URLS` = priorytet (góra = wcześniej). Dzięki temu kluczowe strony
+  trafią do bazy nawet przy niskim `CRAWL_LIMIT`.
+- **Filtrowanie sitemapy** — pomijane są bezwartościowe pod-sitemapy (`attachment`,
+  `multimedia`, tagi, kategorie itp. — ~73% sitemapy us.edu.pl), a `page`,
+  `komunikaty` i `jednostki` mają pierwszeństwo przed `post`/`event`. Sitemapa
+  schodzi z ~45 800 do ~10 700 wartościowych URL-i.
 - **Równoległe pobieranie** — `ThreadPoolExecutor` (`CRAWL_WORKERS`, domyślnie 6).
 - **Requesty warunkowe** — nagłówki `If-None-Match` / `If-Modified-Since`; gdy
   serwer zwróci `304 Not Modified`, strona nie jest pobierana, a BFS kontynuuje z

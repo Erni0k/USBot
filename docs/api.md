@@ -31,9 +31,18 @@ Jeśli w kontekście nie ma odpowiedzi, powiedz:
 Podawaj źródłowy adres URL, z którego pochodzi informacja.
 Nie zmyślaj dat, nazwisk, godzin ani kwot. Odpowiadaj po polsku, zwięźle i uprzejmie.
 
+DOPYTYWANIE O DZIEKANAT:
+(... gdy pytanie o dziekanat nie wskazuje wydziału, bot dopytuje i wymienia
+dostępne wydziały, zamiast zgadywać ...)
+
 KONTEKST:
 {context}
 ```
+
+!!! tip "Dopytywanie o dziekanat"
+    Każdy wydział ma osobny dziekanat z innymi godzinami. Gdy użytkownik pyta o
+    godziny/kontakt dziekanatu, ale nie poda wydziału, bot nie zgaduje — prosi o
+    doprecyzowanie i wymienia wydziały (WH, WNP, WNS, WNŚiT, WPiA, WSNE, WTL).
 
 ## 3.2 Interfejs pgvector (SQL)
 

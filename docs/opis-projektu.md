@@ -23,6 +23,8 @@ Każda funkcja opisana jest w formacie *User Story*:
   samodzielnie zweryfikować odpowiedź.
 - Jako **użytkownik** chcę zadawać krótkie pytania uzupełniające (np. „a wnst?"),
   aby kontynuować temat — bot uwzględnia kontekst poprzednich pytań przy wyszukiwaniu.
+- Jako **student** chcę, aby przy pytaniu o dziekanat bez podania wydziału bot
+  dopytał o który wydział chodzi, aby nie dostać godzin niewłaściwego dziekanatu.
 - Jako **administrator** chcę uruchamiać skrypt ingestii danych, aby baza wiedzy
   bota była aktualna po zmianach na stronie uczelni.
 - Jako **administrator** chcę, aby ponowna ingestia pobierała tylko zmienione strony,
