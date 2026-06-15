@@ -59,10 +59,29 @@ ALLOWED_DOMAINS = (
 _SKIP_EXT = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg",
              ".zip", ".doc", ".docx", ".xls", ".xlsx", ".mp4", ".mp3"}
 
+# Pod-sitemapy pomijane w calosci (brak wartosci dla RAG: zalaczniki, galerie,
+# tagi, kategorie, listy organizatorow itp.). ~73% sitemapy us.edu.pl to zalaczniki.
+_SITEMAP_SKIP = ("attachment", "multimedia", "_tag", "categories", "kategorie",
+                 "organizers", "target_group", "post-archive")
+
+# Priorytet pod-sitemap (mniejsza liczba = crawlowane wczesniej). Reszta = 50.
+_SITEMAP_PRIORITY = {"page": 0, "komunikaty": 1, "jednostki": 2, "post": 10, "event": 20}
+
 
 def _skip(url: str) -> bool:
     low = url.lower().split("?")[0]
     return any(low.endswith(ext) for ext in _SKIP_EXT)
+
+
+def _sitemap_allowed(url: str) -> bool:
+    return not any(bad in url for bad in _SITEMAP_SKIP)
+
+
+def _sitemap_rank(url: str) -> int:
+    for key, rank in _SITEMAP_PRIORITY.items():
+        if key in url:
+            return rank
+    return 50
 
 
 def _parse_sitemap_xml(content: bytes, limit: int) -> list[str]:
@@ -73,6 +92,8 @@ def _parse_sitemap_xml(content: bytes, limit: int) -> list[str]:
         return []
     nested = [el.text for el in root.findall(".//sm:sitemap/sm:loc", NS) if el.text]
     if nested:
+        # Odfiltruj bezwartosciowe pod-sitemapy i posortuj wg priorytetu (page -> ...).
+        nested = sorted((u for u in nested if _sitemap_allowed(u)), key=_sitemap_rank)
         urls: list[str] = []
         for sm_url in nested:
             try:
