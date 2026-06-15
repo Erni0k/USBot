@@ -31,6 +31,7 @@ HEADERS = {
 
 FALLBACK_URLS = [
     "https://usnet.us.edu.pl/",
+    "https://usnet.us.edu.pl/siec/serwer-vpn/",
     "https://eduroam.us.edu.pl/",
     # dziekanaty wydziałów
     "https://us.edu.pl/wydzial/wh/dziekanat/",
