@@ -16,7 +16,14 @@
   kilku ostatnich tur użytkownika (`build_query`).
 - **Pokrycie i wydajność crawla** — pełne odświeżanie bazy przy każdym uruchomieniu
   było kosztowne. Wprowadzono crawl inkrementalny (ETag/Last-Modified + hash) oraz
-  równoległe pobieranie i batch embedding.
+  równoległe pobieranie i batch embedding. Pobieranie paczkami okazało się wąskim
+  gardłem: `usnet.us.edu.pl` odpowiada po ~11 s (czas generowania strony po stronie
+  serwera), więc jedna jego strona blokowała całą paczkę i crawl szedł ~1 stronę/s.
+  Stały pool żądań z limitem na domenę przyspieszył pobieranie z `us.edu.pl` z 1,5
+  do 9,5 strony/s.
+- **Szum w bazie** — ukryty baner cookies trafiał do ~13% fragmentów, a galerie
+  zdjęć i strony załączników WordPressa zajmowały miejsca w wynikach. Usunięto je
+  z ekstrakcji i crawla; ewaluacja retrievalu pokazała wzrost Hit@10 z 0,54 do 0,92.
 - **Port bazy danych** — domyślny port PostgreSQL (5432) bywał zajęty przez lokalne
   instalacje, stąd mapowanie na 5433 w `docker-compose.yml`.
 - **Filtrowanie odpowiedzi** — zapewnienie, że bot nie odpowiada spoza kontekstu,
@@ -33,11 +40,18 @@
   aktualizacja per-URL, tabela `pages` jako cache stanu.
 - **Priorytetyzacja crawla**: priorytetowe seedy przed sitemapą oraz filtrowanie
   bezwartościowych pod-sitemap (załączniki/multimedia/tagi) — ~45,8 tys. → ~10,7 tys. URL-i.
-- **Równoległe pobieranie** (`ThreadPoolExecutor`) + **batch embedding** i batch insert.
+- **Równoległe pobieranie** (`ThreadPoolExecutor`, stale do `CRAWL_WORKERS` żądań
+  w locie, maks. 2 do usnet, 0,1 s odstępu na domenę) + **batch embedding** i batch insert.
+- **Czysta ekstrakcja tekstu**: bez banera cookies, menu i stopki; pomijanie galerii
+  i stron załączników WordPressa.
+- **Ewaluacja retrievalu** (`evaluation/evaluate.py`): 48 pytań z oznaczonymi
+  stronami + 8 spoza zakresu; Hit/Recall/Precision/nDCG@k, MRR, raport pokrycia
+  bazy. Wynik bazowy 1a: Hit@10 0,917, MRR 0,630 (patrz [Testy](testy.md)).
 - Crawl wielu domen: `us.edu.pl`, `usnet.us.edu.pl`, `eduroam.us.edu.pl`.
 - **Dopytywanie o dziekanat** — przy pytaniu bez wskazania wydziału bot prosi o
   doprecyzowanie zamiast zgadywać.
-- Skrypt ingestii z chunkingiem, paskiem postępu (`tqdm`) i trybem `CRAWL_FRESH`.
+- Skrypt ingestii z chunkingiem, paskiem postępu (`tqdm`) i trybami `CRAWL_FRESH`
+  oraz `CRAWL_REFETCH` (ponowna ekstrakcja bez re-embeddingu niezmienionych stron).
 - Infrastruktura Docker (PostgreSQL + pgvector) z automatyczną inicjalizacją bazy.
 - Obsługa dwóch backendów LLM: Ollama (CPU/GPU) i vLLM (GPU).
 - Tryb rozumowania Qwen3 (`ENABLE_THINKING`) i pełna konfiguracja przez `.env`.
@@ -49,8 +63,13 @@
 - CI/CD (GitHub Actions) — nieskonfigurowane w obecnej wersji.
 - Uwierzytelnianie użytkowników — brak w wersji CLI.
 - Monitoring i logowanie strukturalne — brak dedykowanego systemu logów.
-- Pruning nieaktualnych stron — usunięte ze źródła strony pozostają w bazie do
-  najbliższego pełnego re-crawla (`CRAWL_FRESH=true`).
+- Pruning nieaktualnych stron — w bazie zostają stare fragmenty stron, które
+  zwracają już 404, oraz stron, dla których nowa ekstrakcja daje pusty tekst (np.
+  `us.edu.pl/polityka-prywatnosci-usedupl`). Zostają też strony, do których przebieg
+  nie doszedł przed `CRAWL_LIMIT`. Dziś czyści je dopiero pełny re-crawl
+  (`CRAWL_FRESH=true`) albo ręczne usunięcie.
+- Strony załączników pobrane przed wprowadzeniem ich pomijania mogą nadal być w
+  bazie (z krótkim podpisem zdjęcia zamiast banera); ich liczby nie zweryfikowano.
 
 ## 7.3 Kierunki rozwoju
 
@@ -67,4 +86,4 @@
 ---
 
 *Dokument odzwierciedla stan kodu źródłowego repozytorium
-[github.com/Erni0k/USBot](https://github.com/Erni0k/USBot). Wersja 0.2 — czerwiec 2026.*
+[github.com/Erni0k/USBot](https://github.com/Erni0k/USBot). Wersja 0.3 — listopad 2026.*

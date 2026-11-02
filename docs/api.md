@@ -92,7 +92,7 @@ ON CONFLICT (url) DO UPDATE SET ...;
 | `ENABLE_THINKING` | `false` | Tryb rozumowania Qwen3 (wolniejszy, dokładniejszy) |
 | `CRAWL_LIMIT` | `6000` | Maks. liczba stron na jeden crawl |
 | `CRAWL_DEPTH` | `3` | Głębokość BFS (0 = tylko sitemap + seedy) |
-| `CRAWL_WORKERS` | `6` | Równoległe requesty HTTP |
+| `CRAWL_WORKERS` | `6` | Równoległe requesty HTTP (usnet: maks. 2 — `HOST_LIMITS` w `scrape.py`) |
 | `EMBED_BATCH` | `16` | Ile stron embedować naraz |
 | `CRAWL_FRESH` | `false` | `true` = pełny re-crawl (czyści `chunks` i `pages`) |
 | `CRAWL_REFETCH` | `false` | `true` = pobiera wszystkie strony od nowa (bez 304), embeduje tylko te ze zmienionym tekstem |

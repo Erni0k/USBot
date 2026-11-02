@@ -196,5 +196,9 @@ Format jednej linii `queries.jsonl`:
   follow-upy („a wnst?", „dziekanatu tam") trafiają we właściwy kontekst.
 - Przy pytaniu o **dziekanat** (godziny, kontakt) bez podania wydziału bot dopytuje,
   o który wydział chodzi, i wymienia dostępne — zamiast zgadywać.
-- Jeśli strona zniknie z serwisu, jej stare fragmenty zostają w bazie — okresowo
-  odpalaj `CRAWL_FRESH=true`, by wyczyścić nieaktualne treści.
+- Jeśli strona zniknie z serwisu (404), jej stare fragmenty zostają w bazie — okresowo
+  odpalaj `CRAWL_FRESH=true`, by wyczyścić nieaktualne treści. To samo dotyczy stron,
+  dla których nowa ekstrakcja daje pusty tekst, i stron, do których przebieg nie
+  doszedł przed `CRAWL_LIMIT`.
+- Pełny `CRAWL_REFETCH` (~12 tys. stron) trwa ok. 1,5 h — ogranicza go czas
+  odpowiedzi serwera (aktualności ~1 s, usnet ~11 s), nie GPU.

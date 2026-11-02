@@ -102,6 +102,17 @@ CRAWL_REFETCH=true python ingestion/ingest.py
 $env:CRAWL_REFETCH="true"; python ingestion/ingest.py
 ```
 
+`CRAWL_LIMIT` musi objąć całą bazę — strony, do których przebieg nie dojdzie,
+zachowują starą ekstrakcję. Pełny przebieg `CRAWL_REFETCH=true CRAWL_LIMIT=12000`
+trwa ok. 1,5 h: strony z cache serwera idą ~9 stron/s, a aktualności i wydarzenia
+(`post`/`event`, odpowiedź ~1 s) ~2 strony/s. Ogranicza to serwer, nie GPU — CPU, GPU
+i baza są w tym czasie w większości bezczynne. Log warto zapisać do pliku
+(`*.log` jest w `.gitignore`):
+
+```bash
+CRAWL_REFETCH=true CRAWL_LIMIT=12000 python ingestion/ingest.py > ingest-refetch.log 2>&1
+```
+
 Zachowanie crawlera dostroisz w `.env`: `CRAWL_LIMIT`, `CRAWL_DEPTH`,
 `CRAWL_WORKERS`, `EMBED_BATCH` (patrz [Dokumentacja API](api.md)).
 Uruchamiaj okresowo (np. cron raz dziennie), gdy treści na stronie się zmieniają.

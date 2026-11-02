@@ -38,7 +38,7 @@ Wiedza w bazie utrzymywana jest osobnym, **inkrementalnym crawlerem**
 - 🔍 **RAG** na bazie wektorowej pgvector (embeddingi `BAAI/bge-m3`, 1024 wymiary)
 - 🧠 **Lokalny LLM** Qwen3 (domyślnie `qwen3:8b`) — bez wysyłania danych na zewnątrz
 - 💬 **Rozmowa wieloturowa** z retrievalem uwzględniającym kontekst poprzednich pytań
-- 🕸️ **Inkrementalny crawler** BFS z równoległym pobieraniem i pomijaniem niezmienionych stron
+- 🕸️ **Inkrementalny crawler** BFS z równoległym pobieraniem (limit żądań na domenę) i pomijaniem niezmienionych stron
 - 🔗 Każda odpowiedź zawiera **źródłowy URL**
 - 🖥️ Działa na **Linux / macOS / Windows** (Python 3.11+), pełna obsługa polskich znaków
 
