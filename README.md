@@ -22,7 +22,7 @@ us-chatbot/
 ├── requirements.txt    # zależności Python
 ├── ingestion/
 │   ├── ingest.py       # pipeline: crawl → chunking → embeddingi → pgvector
-│   └── scrape.py       # inkrementalny crawler BFS (równoległy fetch)
+│   └── scrape.py       # inkrementalny crawler BFS (stały pool żądań, limit na domenę)
 ├── evaluation/
 │   ├── evaluate.py     # metryki retrievalu: Hit/Recall/Precision/nDCG@k, MRR
 │   └── queries.jsonl   # pytania testowe z oznaczonymi URL-ami
@@ -124,7 +124,8 @@ strony od nowa (bez 304), ale embeddingi liczy tylko dla stron, których tekst s
   budżet `CRAWL_LIMIT` trafia najpierw na najcenniejszą treść.
 - Linki z BFS też są filtrowane (`_SKIP_PATTERNS`: galerie `/multimedia/`, API i
   pliki WordPressa, RSS, kategorie, tagi). Strony, które reguły wykluczają, ingestia
-  usuwa z bazy przy starcie.
+  usuwa z bazy przy starcie. Pomijane są też strony załączników WordPressa (zdjęcie
+  lub PDF z podpisem) — rozpoznawane po klasie `<body>`, bo ich adres tego nie zdradza.
 - **Ekstrakcja tekstu** usuwa przed trafilaturą baner cookies, nagłówek z menu i
   stopkę, a na stronach z `<main>` analizuje tylko jego zawartość. Ukryty baner
   cookies był wcześniej w ~13% fragmentów, a na krótkich stronach zastępował treść.
@@ -183,7 +184,7 @@ Format jednej linii `queries.jsonl`:
 | `ENABLE_THINKING` | tryb rozumowania Qwen3 (wolniejszy) | `false` |
 | `CRAWL_LIMIT` | maks. liczba stron na jeden crawl | `6000` |
 | `CRAWL_DEPTH` | głębokość BFS (0 = tylko sitemap + seedy) | `3` |
-| `CRAWL_WORKERS` | równoległe requesty HTTP | `6` |
+| `CRAWL_WORKERS` | równoległe requesty HTTP (usnet: maks. 2) | `6` |
 | `EMBED_BATCH` | ile stron embedować naraz | `16` |
 | `CRAWL_FRESH` | `true` = pełny re-crawl (czyści bazę) | `false` |
 | `CRAWL_REFETCH` | `true` = pobierz wszystko od nowa, embeduj tylko zmienione | `false` |

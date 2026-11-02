@@ -4,10 +4,12 @@ Pobieranie stron odbywa sie rownolegle (ThreadPoolExecutor).
 Crawl jest inkrementalny: wysyla naglowki warunkowe (If-None-Match /
 If-Modified-Since) i pomija strony, ktore zwroca 304 Not Modified.
 """
+import re
 import time
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter, defaultdict, deque
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import NamedTuple
+from urllib.parse import urlsplit
 
 import httpx
 import trafilatura
@@ -77,6 +79,12 @@ PRIORITY_PREFIXES = (
     "https://usnet.us.edu.pl",
 )
 
+# Grzecznosc wobec serwerow: maks. liczba rownoleglych zadan do domeny (pozostale
+# domeny: `workers`) i minimalny odstep miedzy startami zadan do tej samej domeny.
+# usnet odpowiada po ~11 s - wiecej rownoleglych zadan tylko by go dociazylo.
+HOST_LIMITS = {"usnet.us.edu.pl": 2}
+HOST_DELAY = 0.1  # s
+
 _SKIP_EXT = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg",
              ".zip", ".doc", ".docx", ".xls", ".xlsx", ".mp4", ".mp3"}
 
@@ -94,6 +102,11 @@ _BOILERPLATE_XPATH = ('//*[@id="cmplz-cookiebanner-container"] | //*[contains(@c
                       ' | //header | //footer | //nav | //script | //style | //noscript')
 _BLOCK_TAGS = ("p", "div", "li", "tr", "br", "section", "article", "table", "ul", "ol",
                "h1", "h2", "h3", "h4", "h5", "h6")
+
+# Strony zalacznikow WordPressa (zdjecie lub PDF z podpisem) - bez tresci dla RAG.
+# Ich adres nie zawiera /attachment/ (np. .../sale-wykladowe/dsc00582/), wiec
+# rozpoznajemy je po klasie <body>. Bylo ich w bazie ~490, prawie same z banerem cookies.
+_ATTACHMENT_BODY = re.compile(rb'<body[^>]*\bclass="(?:[^"]*\s)?attachment[\s"]')
 
 # Pod-sitemapy pomijane w calosci (brak wartosci dla RAG: zalaczniki, galerie,
 # tagi, kategorie, listy organizatorow itp.). ~73% sitemapy us.edu.pl to zalaczniki.
@@ -225,8 +238,11 @@ def _links_from_html(content: bytes, base_url: str) -> list[str]:
         return []
 
 
-def _fetch(url: str, cache_entry: dict | None) -> Page:
+def _fetch(url: str, cache_entry: dict | None, client: httpx.Client | None = None) -> Page:
     """Pobiera strone z naglowkami warunkowymi.
+
+    `client` - wspolny klient HTTP (utrzymuje polaczenia miedzy zadaniami);
+    bez niego kazde zadanie otwiera nowe polaczenie.
 
     Zwraca Page ze statusem:
     - "unchanged": serwer odpowiedzial 304 (tresc bez zmian) -> linki z cache
@@ -241,7 +257,7 @@ def _fetch(url: str, cache_entry: dict | None) -> Page:
             headers["If-Modified-Since"] = cache_entry["last_modified"]
 
     try:
-        resp = httpx.get(url, headers=headers, timeout=30, follow_redirects=True)
+        resp = (client or httpx).get(url, headers=headers, timeout=30, follow_redirects=True)
     except Exception as e:
         print(f"  pomijam {url}: {e}")
         return Page(url, "error", None, None, None, [])
@@ -252,6 +268,9 @@ def _fetch(url: str, cache_entry: dict | None) -> Page:
 
     if resp.status_code >= 400:
         print(f"  pomijam {url}: HTTP {resp.status_code}")
+        return Page(url, "error", None, None, None, [])
+
+    if _ATTACHMENT_BODY.search(resp.content):
         return Page(url, "error", None, None, None, [])
 
     text = _extract_text(resp.content)
@@ -270,27 +289,36 @@ def crawl(
     limit: int = 2000,
     max_depth: int = 2,
     workers: int = 6,
-    batch_sleep: float = 0.3,
+    host_delay: float = HOST_DELAY,
     cache: dict[str, dict] | None = None,
 ):
     """Generator: BFS po us.edu.pl. Yields Page.
 
-    Strony pobierane sa rownolegle w paczkach po `workers` sztuk.
+    W locie jest stale do `workers` zadan - gdy jedno sie skonczy, od razu
+    wysylane jest nastepne. Wczesniej strony szly paczkami i jedna wolna strona
+    z usnet (~11 s) blokowala cala paczke, a us.edu.pl odpowiada w ~0.2 s.
+    Grzecznosc wobec serwerow: najwyzej HOST_LIMITS[domena] (domyslnie `workers`)
+    rownoleglych zadan na domene i co najmniej `host_delay` s miedzy startami
+    kolejnych zadan do tej samej domeny.
+
     `cache` mapuje url -> {etag, last_modified, links} z poprzedniego crawla;
     pozwala pomijac niezmienione strony (304) i kontynuowac BFS z cache'owanych
-    linkow. `batch_sleep` to przerwa miedzy paczkami (grzecznosc wobec serwera).
+    linkow.
     """
     cache = cache or {}
     seen: set[str] = set()
-    priority: deque[tuple[str, int]] = deque()
-    queue: deque[tuple[str, int]] = deque()
+    # Kolejki per domena (domena -> FIFO), zeby URL-e zablokowanej domeny (np. usnet
+    # przy limicie zadan) nie wstrzymywaly pobierania z pozostalych.
+    priority: dict[str, deque[tuple[str, int]]] = defaultdict(deque)
+    queue: dict[str, deque[tuple[str, int]]] = defaultdict(deque)
 
     def enqueue(url: str, depth: int, force_priority: bool = False) -> None:
         url = url.rstrip("/")
         if url in seen or _skip(url):
             return
         seen.add(url)
-        (priority if force_priority or _is_priority(url) else queue).append((url, depth))
+        level = priority if force_priority or _is_priority(url) else queue
+        level[urlsplit(url).hostname].append((url, depth))
 
     # Kolejnosc crawlowania: najpierw kolejka priorytetowa - seedy z FALLBACK_URLS
     # (usnet, eduroam, dziekanaty, strony ogolne) oraz wszystkie znalezione podstrony
@@ -302,33 +330,78 @@ def crawl(
         enqueue(url, 0)
 
     visited = 0
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        while (priority or queue) and visited < limit:
-            # Pobierz paczke URL-i, najpierw z kolejki priorytetowej
-            batch: list[tuple[str, int]] = []
-            while (priority or queue) and len(batch) < workers:
-                batch.append((priority or queue).popleft())
+    in_flight: dict[Future, tuple[str, int]] = {}  # zadanie -> (domena, glebokosc)
+    active: Counter[str] = Counter()               # zadania w locie per domena
+    next_start: dict[str, float] = {}              # najwczesniejszy start nastepnego zadania
 
-            futures = {
-                pool.submit(_fetch, url, cache.get(url)): depth
-                for url, depth in batch
-            }
+    def host_ready(host: str, now: float) -> bool:
+        return (active[host] < HOST_LIMITS.get(host, workers)
+                and next_start.get(host, 0.0) <= now)
 
-            for future in as_completed(futures):
-                depth = futures[future]
+    def pick(now: float) -> tuple[str, str, int] | None:
+        """Nastepny URL do pobrania: (domena, url, glebokosc) lub None.
+
+        Kolejka priorytetowa idzie pierwsza. Zwykla jest uzywana, gdy domeny z
+        priorytetowej czekaja (limit/przerwa), ale tylko jesli budzet `limit`
+        wystarczy jeszcze na wszystkie oczekujace URL-e priorytetowe.
+        """
+        n_priority = sum(len(dq) for dq in priority.values())
+        budget = limit - visited - len(in_flight)
+        for level in (priority, queue):
+            if level is queue and budget <= n_priority:
+                break
+            for host, dq in level.items():
+                if dq and host_ready(host, now):
+                    return host, *dq.popleft()
+        return None
+
+    ready: list[Page] = []
+    with httpx.Client(limits=httpx.Limits(max_connections=workers)) as client, \
+            ThreadPoolExecutor(max_workers=workers) as pool:
+        while True:
+            # Uzupelnij wolne miejsca, zanim oddamy strony (ingest liczy wtedy
+            # embeddingi, a zadania w tle sie pobieraja)
+            now = time.monotonic()
+            while len(in_flight) < workers and visited + len(in_flight) < limit:
+                nxt = pick(now)
+                if nxt is None:
+                    break
+                host, url, depth = nxt
+                active[host] += 1
+                next_start[host] = now + host_delay
+                in_flight[pool.submit(_fetch, url, cache.get(url), client)] = (host, depth)
+
+            yield from ready
+            ready = []
+
+            # Gdy jakas domena czeka tylko na przerwe, obudz sie na czas jej konca
+            now = time.monotonic()
+            delays = [next_start[h] - now for level in (priority, queue)
+                      for h, dq in level.items() if dq and next_start.get(h, 0.0) > now]
+            timeout = min(delays) if delays else None
+            if not in_flight:
+                if visited >= limit or not any(dq for level in (priority, queue)
+                                               for dq in level.values()):
+                    break
+                if timeout:
+                    time.sleep(timeout)
+                continue
+
+            done, _ = wait(in_flight, timeout=timeout, return_when=FIRST_COMPLETED)
+            for future in done:
+                host, depth = in_flight.pop(future)
+                active[host] -= 1
                 page = future.result()
                 if page.status == "error":
                     continue
 
                 visited += 1
-                yield page
+                ready.append(page)
 
                 # Kontynuuj BFS: linki ze swiezej strony lub z cache (przy 304)
                 if depth < max_depth:
                     for link in page.links:
                         enqueue(link, depth + 1)
-
-            time.sleep(batch_sleep)
 
 
 # --- stare API (kompatybilnosc wsteczna) ---

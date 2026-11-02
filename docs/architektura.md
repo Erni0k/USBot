@@ -45,7 +45,9 @@ priorytetowych seedów i sitemapy. Kluczowe mechanizmy:
   mieściły się w `CRAWL_LIMIT`.
 - **Filtrowanie linków** — `_SKIP_PATTERNS` odrzuca galerie zdjęć (`/multimedia/`),
   API i pliki WordPressa, RSS, kategorie i tagi. Ingestia przy starcie usuwa z bazy
-  strony wykluczone przez obecne reguły.
+  strony wykluczone przez obecne reguły. Strony załączników WordPressa (np.
+  `…/sale-wykladowe/dsc00582/`) nie mają w adresie `/attachment/`, więc crawler
+  rozpoznaje je po klasie `attachment` w `<body>` i pomija.
 - **Ekstrakcja tekstu** — przed trafilaturą usuwany jest ukryty baner cookies
   (Complianz), nagłówek z menu i stopka; jeśli strona ma `<main>`, analizowana jest
   tylko jego zawartość. Gdy trafilatura zwróci mniej niż połowę tekstu `<main>`
@@ -54,7 +56,16 @@ priorytetowych seedów i sitemapy. Kluczowe mechanizmy:
   `multimedia`, tagi, kategorie itp. — ~73% sitemapy us.edu.pl), a `page`,
   `komunikaty` i `jednostki` mają pierwszeństwo przed `post`/`event`. Sitemapa
   schodzi z ~45 800 do ~10 700 wartościowych URL-i.
-- **Równoległe pobieranie** — `ThreadPoolExecutor` (`CRAWL_WORKERS`, domyślnie 6).
+- **Równoległe pobieranie** — `ThreadPoolExecutor` (`CRAWL_WORKERS`, domyślnie 6)
+  ze wspólnym klientem HTTP (ponowne użycie połączeń). W locie jest stale do
+  `CRAWL_WORKERS` żądań — gdy jedno się skończy, od razu wysyłane jest następne.
+  Wcześniej strony szły paczkami i jedna wolna odpowiedź `usnet.us.edu.pl` (~11 s,
+  `us.edu.pl` ~0.2 s) blokowała całą paczkę. Grzeczność wobec serwerów: najwyżej
+  2 równoległe żądania do usnet (`HOST_LIMITS`) i co najmniej 0.1 s między startami
+  żądań do tej samej domeny (`HOST_DELAY`). Kolejki są osobne dla każdej domeny,
+  więc czekające URL-e usnet nie wstrzymują reszty; zwykła kolejka jest używana
+  w tym czasie tylko wtedy, gdy budżet `CRAWL_LIMIT` wystarczy jeszcze na wszystkie
+  czekające URL-e priorytetowe.
 - **Requesty warunkowe** — nagłówki `If-None-Match` / `If-Modified-Since`; gdy
   serwer zwróci `304 Not Modified`, strona nie jest pobierana, a BFS kontynuuje z
   linków zapisanych w cache.
