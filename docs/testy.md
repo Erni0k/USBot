@@ -74,7 +74,7 @@ MRR@10 = 0.384. Odległość kosinusowa top-1: pytania w zakresie 0.214–0.514
 
 Wnioski:
 
-- **Pokrycie bazy jest głównym problemem.** Tylko 27 z 64 najlepszych odpowiedzi jest
+- **Pokrycie bazy jest głównym problemem** (stan przed poprawkami crawlera — patrz niżej). Tylko 27 z 64 najlepszych odpowiedzi jest
   w bazie, a 11 z 48 pytań nie ma w niej żadnej trafnej strony. Portal studenta
   `us.edu.pl/student/` (stypendia, akademiki, urlopy, ELS) nie występuje w głównej
   sitemapie i crawler go nie odwiedza. Brakuje też `eduroam.us.edu.pl/konfiguracja`
@@ -89,6 +89,28 @@ Wnioski:
   trafnej strony w top-10, więc nic nie tracimy. Przy 0.40 tracimy już jedno trafienie.
   Pytania najbliższe bazie to te o innych uczelniach (Politechnika 0.378, SUM 0.397).
   Próbka jest mała — przed wdrożeniem progu warto rozszerzyć zbiór.
+
+**Po poprawkach crawlera** (2026-11-02): kolejka priorytetowa dla portalu studenta,
+usnet i eduroam; ekstrakcja bez banera cookies, menu i stopki; usunięcie 3 421 stron
+galerii `/multimedia/` (~25% fragmentów). Pomiar na **częściowej** ingestii — ponownie
+pobrano tylko kolejkę priorytetową (~230 stron), reszta bazy ma jeszcze starą ekstrakcję
+(ok. 2 tys. fragmentów z banerem cookies). 32 290 fragmentów z 6 846 stron.
+
+| k | Hit@k | Recall@k | Prec@k | nDCG@k | Hit@k (odp. w bazie) |
+|---|---|---|---|---|---|
+| 1 | 0.500 (+0.19) | 0.221 | 0.500 | 0.444 (+0.22) | 0.545 |
+| 3 | 0.646 (+0.23) | 0.342 | 0.382 | 0.368 | 0.705 |
+| 5 | 0.688 (+0.21) | 0.423 | 0.325 | 0.403 (+0.21) | 0.750 |
+| 10 | 0.771 (+0.23) | 0.527 | 0.235 | 0.432 | 0.841 |
+
+MRR@10 = 0.581 (było 0.384). Pokrycie: 57/67 najlepszych odpowiedzi w bazie (było
+27/64); brakujące to podstrony `student/studia/tok-studiow-2/` (urlopy, przeniesienie,
+zmiana formy), do których częściowa ingestia nie doszła. Wzrosła też kolumna
+„odp. w bazie" (Hit@5 0.62 → 0.75) — mniej szumu z galerii i banera pomaga samemu
+wyszukiwaniu, nie tylko pokryciu. Etykiety uzupełniono o strony znalezione po
+poprawce (WPiA/WTL kontakt, usnet `siec-bezprzewodowa`); stron tych nie było w
+starej bazie, więc wynik bazowy się nie zmienia. Próg 0.42 nadal odrzuca 6/8 pytań
+spoza zakresu bez utraty trafień.
 
 !!! warning "Status"
     Katalog `tests/` jest **planowany** — testy zostaną zaimplementowane w kolejnych

@@ -6,6 +6,8 @@ zmienily, sa pomijane - nie sa ponownie embedowane ani zapisywane.
 
 Uruchom:            python ingestion/ingest.py
 Pelny re-crawl:     CRAWL_FRESH=true python ingestion/ingest.py
+Ponowna ekstrakcja: CRAWL_REFETCH=true python ingestion/ingest.py
+                    (np. po zmianie ekstrakcji tekstu; embeduje tylko zmienione strony)
 Odpalaj okresowo (np. cron raz dziennie), gdy tresci na stronie sie zmienia.
 """
 import hashlib
@@ -33,6 +35,7 @@ CRAWL_DEPTH   = int(os.getenv("CRAWL_DEPTH", "2"))
 CRAWL_WORKERS = int(os.getenv("CRAWL_WORKERS", "6"))
 EMBED_BATCH   = int(os.getenv("EMBED_BATCH", "16"))   # ile stron naraz do embeddingu
 CRAWL_FRESH   = os.getenv("CRAWL_FRESH", "false").lower() == "true"
+CRAWL_REFETCH = os.getenv("CRAWL_REFETCH", "false").lower() == "true"  # po zmianie ekstrakcji tekstu
 
 splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=120)
 model = SentenceTransformer(EMBED_MODEL)
@@ -63,6 +66,17 @@ def _load_cache(conn: psycopg.Connection) -> dict[str, dict]:
         r[0]: {"etag": r[1], "last_modified": r[2], "content_hash": r[3], "links": r[4]}
         for r in rows
     }
+
+
+def _purge_excluded(conn: psycopg.Connection) -> int:
+    """Usuwa z bazy strony, ktore obecne reguly crawlera wykluczaja (np. galerie)."""
+    urls = [r[0] for r in conn.execute("SELECT url FROM pages UNION SELECT url FROM chunks")]
+    bad = [u for u in urls if scrape.excluded(u)]
+    if bad:
+        conn.execute("DELETE FROM chunks WHERE url = ANY(%s)", (bad,))
+        conn.execute("DELETE FROM pages WHERE url = ANY(%s)", (bad,))
+        conn.commit()
+    return len(bad)
 
 
 def _hash(text: str) -> str:
@@ -140,8 +154,18 @@ def run() -> None:
             conn.commit()
             cache: dict[str, dict] = {}
         else:
+            n_purged = _purge_excluded(conn)
+            if n_purged:
+                print(f"Usunieto {n_purged} stron wykluczonych przez reguly crawlera")
             cache = _load_cache(conn)
             print(f"Wczytano stan {len(cache)} stron z poprzedniego crawla")
+            if CRAWL_REFETCH:
+                # Bez naglowkow warunkowych serwer nie odpowie 304, wiec kazda strona
+                # zostanie pobrana i wyekstrahowana od nowa. Hash tresci zostaje,
+                # wiec embeddingi licza sie tylko dla stron, ktorych tekst sie zmienil.
+                print("CRAWL_REFETCH=true -> pobieram wszystkie strony od nowa")
+                for entry in cache.values():
+                    entry["etag"] = entry["last_modified"] = None
 
         bar = tqdm(
             scrape.crawl(limit=CRAWL_LIMIT, max_depth=CRAWL_DEPTH,

@@ -108,16 +108,26 @@ Pasek postępu pokazuje `+` (strona nowa/zmieniona) i `=` (bez zmian).
 **Crawl jest inkrementalny** — kolejne uruchomienia pobierają tylko to, co się
 zmieniło (nagłówki `If-None-Match` / `If-Modified-Since` + hash treści). Pełne
 odświeżenie od zera: `CRAWL_FRESH=true` (czyści `chunks` i `pages`).
+Po zmianie sposobu ekstrakcji tekstu użyj `CRAWL_REFETCH=true` — pobiera wszystkie
+strony od nowa (bez 304), ale embeddingi liczy tylko dla stron, których tekst się zmienił.
 
 **Kolejność i filtrowanie:**
 
-- Najpierw crawlowane są **priorytetowe seedy** (`FALLBACK_URLS` w `scrape.py`:
-  usnet, eduroam, dziekanaty, strony ogólne), dopiero potem reszta z sitemapy.
-  Kolejność na liście = priorytet (góra = wcześniej).
+- Najpierw crawlowana jest **kolejka priorytetowa**: seedy (`FALLBACK_URLS` w
+  `scrape.py`: usnet, eduroam, dziekanaty, strony ogólne) oraz wszystkie znalezione
+  podstrony `PRIORITY_PREFIXES` — portalu studenta `us.edu.pl/student/`, usnet i
+  eduroam. Dopiero potem reszta z sitemapy i BFS. Portalu studenta nie ma w
+  `sitemap.xml`, więc bez tego crawler docierał do niego dopiero po ~10 tys. URL-i.
 - Sitemapa jest **filtrowana** — pomijane są bezwartościowe pod-sitemapy
   (załączniki, multimedia, tagi, kategorie; ~73% sitemapy us.edu.pl), a `page`,
   `komunikaty` i `jednostki` mają pierwszeństwo przed `post`/`event`. Dzięki temu
   budżet `CRAWL_LIMIT` trafia najpierw na najcenniejszą treść.
+- Linki z BFS też są filtrowane (`_SKIP_PATTERNS`: galerie `/multimedia/`, API i
+  pliki WordPressa, RSS, kategorie, tagi). Strony, które reguły wykluczają, ingestia
+  usuwa z bazy przy starcie.
+- **Ekstrakcja tekstu** usuwa przed trafilaturą baner cookies, nagłówek z menu i
+  stopkę, a na stronach z `<main>` analizuje tylko jego zawartość. Ukryty baner
+  cookies był wcześniej w ~13% fragmentów, a na krótkich stronach zastępował treść.
 
 Uruchamiaj okresowo (np. cron raz dziennie) gdy treści na stronie się zmieniają.
 
@@ -176,6 +186,7 @@ Format jednej linii `queries.jsonl`:
 | `CRAWL_WORKERS` | równoległe requesty HTTP | `6` |
 | `EMBED_BATCH` | ile stron embedować naraz | `16` |
 | `CRAWL_FRESH` | `true` = pełny re-crawl (czyści bazę) | `false` |
+| `CRAWL_REFETCH` | `true` = pobierz wszystko od nowa, embeduj tylko zmienione | `false` |
 
 ## Uwagi
 

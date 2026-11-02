@@ -91,6 +91,17 @@ CRAWL_FRESH=true python ingestion/ingest.py
 $env:CRAWL_FRESH="true"; python ingestion/ingest.py
 ```
 
+Po zmianie ekstrakcji tekstu (`scrape.py`) pobierz wszystkie strony od nowa, ale bez
+liczenia embeddingów dla stron, których tekst się nie zmienił:
+
+```bash
+# Linux / macOS
+CRAWL_REFETCH=true python ingestion/ingest.py
+
+# Windows PowerShell
+$env:CRAWL_REFETCH="true"; python ingestion/ingest.py
+```
+
 Zachowanie crawlera dostroisz w `.env`: `CRAWL_LIMIT`, `CRAWL_DEPTH`,
 `CRAWL_WORKERS`, `EMBED_BATCH` (patrz [Dokumentacja API](api.md)).
 Uruchamiaj okresowo (np. cron raz dziennie), gdy treści na stronie się zmieniają.

@@ -37,10 +37,19 @@ generuje odpowiedź strumieniowo.
 Crawler (`ingestion/scrape.py`) robi **BFS** po dozwolonych domenach, startując od
 priorytetowych seedów i sitemapy. Kluczowe mechanizmy:
 
-- **Priorytet seedów** — najpierw kolejkowane są strony z `FALLBACK_URLS` (usnet,
-  eduroam, dziekanaty, strony ogólne), dopiero potem URL-e z sitemapy. Kolejność na
-  liście `FALLBACK_URLS` = priorytet (góra = wcześniej). Dzięki temu kluczowe strony
-  trafią do bazy nawet przy niskim `CRAWL_LIMIT`.
+- **Kolejka priorytetowa** — najpierw pobierane są strony z `FALLBACK_URLS` (usnet,
+  eduroam, dziekanaty, strony ogólne) oraz każda znaleziona podstrona z
+  `PRIORITY_PREFIXES` (portal studenta `us.edu.pl/student/`, usnet, eduroam), dopiero
+  potem URL-e z sitemapy i reszta BFS. Portalu studenta nie ma w `sitemap.xml` —
+  w zwykłej kolejce jego podstrony trafiały za ~10 tys. URL-i z sitemapy i nie
+  mieściły się w `CRAWL_LIMIT`.
+- **Filtrowanie linków** — `_SKIP_PATTERNS` odrzuca galerie zdjęć (`/multimedia/`),
+  API i pliki WordPressa, RSS, kategorie i tagi. Ingestia przy starcie usuwa z bazy
+  strony wykluczone przez obecne reguły.
+- **Ekstrakcja tekstu** — przed trafilaturą usuwany jest ukryty baner cookies
+  (Complianz), nagłówek z menu i stopka; jeśli strona ma `<main>`, analizowana jest
+  tylko jego zawartość. Gdy trafilatura zwróci mniej niż połowę tekstu `<main>`
+  (strony-kafelki portalu studenta), brany jest cały `<main>`.
 - **Filtrowanie sitemapy** — pomijane są bezwartościowe pod-sitemapy (`attachment`,
   `multimedia`, tagi, kategorie itp. — ~73% sitemapy us.edu.pl), a `page`,
   `komunikaty` i `jednostki` mają pierwszeństwo przed `post`/`event`. Sitemapa

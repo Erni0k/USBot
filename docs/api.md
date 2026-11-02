@@ -95,6 +95,7 @@ ON CONFLICT (url) DO UPDATE SET ...;
 | `CRAWL_WORKERS` | `6` | Równoległe requesty HTTP |
 | `EMBED_BATCH` | `16` | Ile stron embedować naraz |
 | `CRAWL_FRESH` | `false` | `true` = pełny re-crawl (czyści `chunks` i `pages`) |
+| `CRAWL_REFETCH` | `false` | `true` = pobiera wszystkie strony od nowa (bez 304), embeduje tylko te ze zmienionym tekstem |
 | `HF_HUB_OFFLINE` | `1` (ustawiane automatycznie) | Tryb offline Hugging Face; `0` wymusza pobranie modelu |
 | `POSTGRES_USER` | `chatbot` | Użytkownik bazy (Docker) |
 | `POSTGRES_PASSWORD` | `changeme` | Hasło bazy (Docker) |

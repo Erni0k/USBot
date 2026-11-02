@@ -29,24 +29,35 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 }
 
+_DZIEKANATY = "https://us.edu.pl/student/nowy-student/nowy-student-pierwsze-kroki/dziekanaty/"
+
 FALLBACK_URLS = [
     "https://usnet.us.edu.pl/",
     "https://usnet.us.edu.pl/siec/serwer-vpn/",
+    "https://usnet.us.edu.pl/uslugi-sieciowe/konta-studenckie/",
     "https://eduroam.us.edu.pl/",
-    # dziekanaty wydziałów
+    "https://eduroam.us.edu.pl/konfiguracja/",
+    # dziekanaty wydziałów (strony wydziałów + portal studenta)
     "https://us.edu.pl/wydzial/wh/dziekanat/",
     "https://us.edu.pl/wydzial/wnp/student/dziekanat/",
-    "https://us.edu.pl/wydzial/wns/wydzial/struktura/administracja/dziekanat-2/",
+    "https://us.edu.pl/wydzial/wns/wydzial/struktura/administracja/dziekanat/",
     "https://us.edu.pl/wydzial/wnst/studia/dziekanaty/",
-    "https://us.edu.pl/student/nowy-student/nowy-student-pierwsze-kroki/dziekanaty/dziekanat-wydzialu-prawa-i-administracji/",
     "https://us.edu.pl/wydzial/wsne/ksztalcenie/student-wydzialu/dziekanat/",
-    "https://us.edu.pl/student/nowy-student/nowy-student-pierwsze-kroki/dziekanaty/dziekanat-wydzialu-teologicznego/",
+    "https://us.edu.pl/wydzial/wpia/wydzial/kontakt/",
+    "https://us.edu.pl/wydzial/wtl/administracja/dziekanat/",
+    _DZIEKANATY,
+    _DZIEKANATY + "dziekanat-wydzialu-humanistycznego/",
+    _DZIEKANATY + "dziekanat-wydzialu-nauk-przyrodniczych/",
+    _DZIEKANATY + "dziekanat-wydzialu-nauk-spolecznych/",
+    _DZIEKANATY + "dziekanat-wydzialu-nauk-scislych-i-technicznych/",
+    _DZIEKANATY + "dziekanat-wydzialu-prawa-i-administracji/",
+    _DZIEKANATY + "dziekanat-wydzialu-sztuki-i-nauk-o-edukacji/",
+    _DZIEKANATY + "dziekanat-wydzialu-teologicznego/",
+    _DZIEKANATY + "dziekanat-szkoly-filmowej-im-krzysztofa-kieslowskiego/",
     # strony ogólne
     "https://us.edu.pl/",
     "https://us.edu.pl/student/",
-    "https://us.edu.pl/wydzialy/",
     "https://us.edu.pl/kandydat/",
-    "https://us.edu.pl/nauka/",
     "https://us.edu.pl/kontakt/",
 ]
 
@@ -56,8 +67,33 @@ ALLOWED_DOMAINS = (
     "https://usnet.us.edu.pl",
 )
 
+# Sekcje najcenniejsze dla studentów. Ich podstrony trafiają do kolejki priorytetowej,
+# niezależnie od tego, gdzie je znaleziono. Portal studenta to osobna instalacja
+# WordPressa, której nie ma w sitemap.xml — bez tego BFS dochodził do niej dopiero
+# po ~10 tys. URL-i z sitemapy, czyli zwykle już po wyczerpaniu CRAWL_LIMIT.
+PRIORITY_PREFIXES = (
+    "https://us.edu.pl/student/",
+    "https://eduroam.us.edu.pl",
+    "https://usnet.us.edu.pl",
+)
+
 _SKIP_EXT = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg",
              ".zip", ".doc", ".docx", ".xls", ".xlsx", ".mp4", ".mp3"}
+
+# Fragmenty URL-i bez wartości dla RAG: API i pliki WordPressa, kanały RSS,
+# listy kategorii/tagów, galerie zdjęć, załączniki, duplikat /pl/ portalu studenta.
+_SKIP_PATTERNS = ("/wp-json", "/wp-content/", "/wp-includes/", "xmlrpc.php", "/feed/",
+                  "/comments/", "/category/", "/tag/", "/multimedia/", "/attachment/",
+                  "/student/pl/", "?")
+
+# Elementy usuwane przed ekstrakcja tekstu. Baner cookies (wtyczka Complianz) jest
+# ukryty, ale siedzi w HTML kazdej strony - na krotkich stronach trafilatura brala
+# go za tresc glowna (~13% fragmentow w bazie). Naglowek z menu i paskiem WCAG
+# trafial do tekstu, gdy trafilatura nie znalazla tresci i brala cala strone.
+_BOILERPLATE_XPATH = ('//*[@id="cmplz-cookiebanner-container"] | //*[contains(@class, "cmplz-")]'
+                      ' | //header | //footer | //nav | //script | //style | //noscript')
+_BLOCK_TAGS = ("p", "div", "li", "tr", "br", "section", "article", "table", "ul", "ol",
+               "h1", "h2", "h3", "h4", "h5", "h6")
 
 # Pod-sitemapy pomijane w calosci (brak wartosci dla RAG: zalaczniki, galerie,
 # tagi, kategorie, listy organizatorow itp.). ~73% sitemapy us.edu.pl to zalaczniki.
@@ -69,8 +105,60 @@ _SITEMAP_PRIORITY = {"page": 0, "komunikaty": 1, "jednostki": 2, "post": 10, "ev
 
 
 def _skip(url: str) -> bool:
-    low = url.lower().split("?")[0]
-    return any(low.endswith(ext) for ext in _SKIP_EXT)
+    low = url.lower()
+    return (any(low.split("?")[0].endswith(ext) for ext in _SKIP_EXT)
+            or any(p in low for p in _SKIP_PATTERNS)
+            or low.rstrip("/").endswith("/feed"))
+
+
+def excluded(url: str) -> bool:
+    """Czy URL jest wykluczony przez obecne reguły crawlera (do czyszczenia bazy)."""
+    return not any(url.startswith(d) for d in ALLOWED_DOMAINS) or _skip(url)
+
+
+def _is_priority(url: str) -> bool:
+    # Porownanie z koncowym "/", zeby /student/ nie lapalo np. /studentka-z-...
+    url = url.rstrip("/") + "/"
+    return any(url.startswith(p.rstrip("/") + "/") for p in PRIORITY_PREFIXES)
+
+
+def _main_text(tree) -> str:
+    """Caly tekst elementu <main>, z podzialem na linie po elementach blokowych."""
+    main = tree.xpath("//main")
+    if not main:
+        return ""
+    for el in main[0].iter(*_BLOCK_TAGS):
+        el.tail = "\n" + (el.tail or "")
+    lines = (" ".join(line.split()) for line in main[0].text_content().splitlines())
+    return "\n".join(line for line in lines if line)
+
+
+def _extract_text(content: bytes) -> str | None:
+    """Wyciaga tresc strony: trafilatura po usunieciu banera, menu i stopki.
+
+    Gdy strona ma <main>, trafilatura dostaje tylko jego zawartosc - inaczej na
+    stronach bez tresci zbierala cale <body> (pasek COVID, linki "przejdz do tresci").
+    Trafilatura wybiera jeden blok tresci i na stronach portalu (np. akademiki)
+    gubi wiekszosc tekstu. Jesli zwrocila mniej niz polowe tego, co jest w <main>,
+    bierzemy caly <main>.
+    """
+    try:
+        tree = lxml_html.fromstring(content)
+        for el in tree.xpath(_BOILERPLATE_XPATH):
+            el.drop_tree()
+        main = tree.xpath("//main")
+        if main:
+            html = f"<html><body>{lxml_html.tostring(main[0], encoding='unicode')}</body></html>"
+        else:
+            html = lxml_html.tostring(tree, encoding="unicode")
+    except Exception:
+        return trafilatura.extract(content.decode("utf-8", errors="replace"),
+                                   include_comments=False, include_tables=True)
+    text = trafilatura.extract(html, include_comments=False, include_tables=True)
+    main_text = _main_text(tree)
+    if len(main_text) > 2 * len(text or ""):
+        return main_text
+    return text
 
 
 def _sitemap_allowed(url: str) -> bool:
@@ -166,11 +254,7 @@ def _fetch(url: str, cache_entry: dict | None) -> Page:
         print(f"  pomijam {url}: HTTP {resp.status_code}")
         return Page(url, "error", None, None, None, [])
 
-    text = trafilatura.extract(
-        resp.content.decode("utf-8", errors="replace"),
-        include_comments=False,
-        include_tables=True,
-    )
+    text = _extract_text(resp.content)
     links = _links_from_html(resp.content, url)
     return Page(
         url,
@@ -198,24 +282,32 @@ def crawl(
     """
     cache = cache or {}
     seen: set[str] = set()
+    priority: deque[tuple[str, int]] = deque()
     queue: deque[tuple[str, int]] = deque()
 
-    # Kolejnosc crawlowania: najpierw priorytetowe seedy z FALLBACK_URLS
-    # (usnet, eduroam, dziekanaty, strony ogolne), potem reszta z sitemapy.
-    # Kolejnosc na liscie FALLBACK_URLS = priorytet (gora = wczesniej).
-    for url in FALLBACK_URLS + _sitemap_urls(limit):
+    def enqueue(url: str, depth: int, force_priority: bool = False) -> None:
         url = url.rstrip("/")
-        if url not in seen:
-            seen.add(url)
-            queue.append((url, 0))
+        if url in seen or _skip(url):
+            return
+        seen.add(url)
+        (priority if force_priority or _is_priority(url) else queue).append((url, depth))
+
+    # Kolejnosc crawlowania: najpierw kolejka priorytetowa - seedy z FALLBACK_URLS
+    # (usnet, eduroam, dziekanaty, strony ogolne) oraz wszystkie znalezione podstrony
+    # PRIORITY_PREFIXES - potem reszta z sitemapy i BFS.
+    # Kolejnosc na liscie FALLBACK_URLS = priorytet (gora = wczesniej).
+    for url in FALLBACK_URLS:
+        enqueue(url, 0, force_priority=True)
+    for url in _sitemap_urls(limit):
+        enqueue(url, 0)
 
     visited = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        while queue and visited < limit:
-            # Pobierz paczke URL-i z kolejki
+        while (priority or queue) and visited < limit:
+            # Pobierz paczke URL-i, najpierw z kolejki priorytetowej
             batch: list[tuple[str, int]] = []
-            while queue and len(batch) < workers:
-                batch.append(queue.popleft())
+            while (priority or queue) and len(batch) < workers:
+                batch.append((priority or queue).popleft())
 
             futures = {
                 pool.submit(_fetch, url, cache.get(url)): depth
@@ -234,10 +326,7 @@ def crawl(
                 # Kontynuuj BFS: linki ze swiezej strony lub z cache (przy 304)
                 if depth < max_depth:
                     for link in page.links:
-                        link = link.rstrip("/")
-                        if link not in seen:
-                            seen.add(link)
-                            queue.append((link, depth + 1))
+                        enqueue(link, depth + 1)
 
             time.sleep(batch_sleep)
 
@@ -252,7 +341,7 @@ def fetch_text(url: str) -> str | None:
     try:
         resp = httpx.get(url, headers=HEADERS, timeout=30, follow_redirects=True)
         resp.raise_for_status()
-        return trafilatura.extract(resp.text, include_comments=False, include_tables=True)
+        return _extract_text(resp.content)
     except Exception as e:
         print(f"Blad pobierania {url}: {e}")
         return None
