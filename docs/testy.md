@@ -112,6 +112,43 @@ poprawce (WPiA/WTL kontakt, usnet `siec-bezprzewodowa`); stron tych nie było w
 starej bazie, więc wynik bazowy się nie zmienia. Próg 0.42 nadal odrzuca 6/8 pytań
 spoza zakresu bez utraty trafień.
 
+**Wynik bazowy 1a — pełna ingestia** (2026-11-02; bge-m3, chunk 800/120, samo
+wyszukiwanie wektorowe, **39 003 fragmentów z 12 020 stron**). Punkt odniesienia dla
+kolejnych zmian; wyniki per pytanie w `baseline-1a.json`. Cała baza ma już nową
+ekstrakcję: pełny przebieg `CRAWL_REFETCH=true CRAWL_LIMIT=12000` (9 001 stron
+zmienionych, 2 998 bez zmian), po nim usunięcie 554 stron, do których przebieg nie
+doszedł, a które były stronami załączników WordPressa (492) albo zwracały już 404 (62),
+i ponowne pobranie 16 pozostałych. W bazie nie ma fragmentów z banerem cookies — trzy
+trafienia frazy „przywiązuje dużą wagę do poszanowania prywatności" to treść stron
+polityki prywatności.
+
+| k | Hit@k | Recall@k | Prec@k | nDCG@k | Hit@k (odp. w bazie) |
+|---|---|---|---|---|---|
+| 1 | 0.500 | 0.247 | 0.500 | 0.444 | 0.500 |
+| 3 | 0.729 (+0.08) | 0.409 | 0.382 | 0.422 (+0.05) | 0.729 |
+| 5 | 0.792 (+0.10) | 0.541 | 0.333 | 0.485 (+0.08) | 0.792 |
+| 10 | 0.917 (+0.15) | 0.646 | 0.250 | 0.519 (+0.09) | 0.917 |
+
+Zmiany w nawiasach względem pomiaru na częściowej ingestii (tabela wyżej).
+MRR@10 = 0.630 (było 0.581). Pokrycie: 94/95 oznaczonych stron i 67/67 najlepszych
+odpowiedzi; 48/48 pytań ma w bazie co najmniej jedną trafną stronę, dlatego obie
+kolumny Hit@k są równe. Brakuje tylko martwego adresu `…/dziekanat-2/` (404).
+
+- **Pudła są już tylko po stronie wyszukiwania.** Bez trafienia w top-10 zostały
+  4 pytania: `niepelnosprawnosc`, `rzecznik-praw-studenta`, `wydzialy`,
+  `kampus-cieszyn` — trafne strony są w bazie, ale przegrywają z podobnymi.
+- **Angielskie wersje portalu.** Pod `/student/en/` jest 579 stron z angielskim
+  tłumaczeniem portalu studenta. bge-m3 jest wielojęzyczny, więc tłumaczenie trafia
+  tuż obok polskiego oryginału i w top-10 zajmuje miejsca innym stronom (np. pytanie
+  o niepełnosprawność: 3 z 9 różnych stron w top-10 to `/student/en/`).
+- **Stare aktualności.** Przy ogólnych pytaniach (`wydzialy`) top-10 wypełniają
+  wpisy o rekrutacji z lat 2017–2021 zamiast stron struktury uczelni.
+- **Próg odcięcia.** Odległość top-1: w zakresie 0.191–0.406 (mediana 0.291), spoza
+  zakresu 0.360–0.542 (mediana 0.477). Przy progu 0.42 odrzucone zostaje 6/8 pytań
+  spoza zakresu i żadne w zakresie; przy 0.40 — 6/8 i jedno w zakresie (bez trafienia
+  w top-10). Najbliżej bazy nadal są pytania o inne uczelnie (Politechnika 0.360,
+  SUM 0.398).
+
 !!! warning "Status"
     Katalog `tests/` jest **planowany** — testy zostaną zaimplementowane w kolejnych
     iteracjach. Powyższe komendy zakładają standardową strukturę pytest.
