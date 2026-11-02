@@ -23,6 +23,9 @@ us-chatbot/
 ├── ingestion/
 │   ├── ingest.py       # pipeline: crawl → chunking → embeddingi → pgvector
 │   └── scrape.py       # inkrementalny crawler BFS (równoległy fetch)
+├── evaluation/
+│   ├── evaluate.py     # metryki retrievalu: Hit/Recall/Precision/nDCG@k, MRR
+│   └── queries.jsonl   # pytania testowe z oznaczonymi URL-ami
 ├── infra/              # init.sql (pgvector, tabele chunks i pages)
 ├── docker-compose.yml  # baza Postgres + opcjonalnie vLLM
 └── .env.example
@@ -128,6 +131,35 @@ Wpisz pytanie i naciśnij Enter. Wyjście: `wyjdź` lub Ctrl+C.
 
 > Ollama musi działać (`ollama serve`) i baza musi być wstała (`docker compose up -d db`)
 > zanim odpalisz bota.
+
+## 6. Ewaluacja retrievalu
+
+Mierzy samo wyszukiwanie (bez LLM-a) na zbiorze pytań z `evaluation/queries.jsonl`.
+Wymaga tylko bazy, Ollama nie jest potrzebna.
+
+```bash
+python evaluation/evaluate.py
+python evaluation/evaluate.py --k 1 3 5 10 20 --verbose   # + URL-e dla pudłowanych pytań
+python evaluation/evaluate.py --out wyniki.json           # wyniki per pytanie
+```
+
+Format jednej linii `queries.jsonl`:
+
+```json
+{"id": "eduroam-konfiguracja", "question": "Jak połączyć się z siecią eduroam na uczelni?",
+ "relevant": {"https://eduroam.us.edu.pl/konfiguracja/": 2, "https://eduroam.us.edu.pl/": 1}}
+```
+
+- `relevant` — strony, które powinny zostać zwrócone: `2` = odpowiada na pytanie,
+  `1` = częściowo. Trafność liczona jest po URL-u, bo ID chunków zmieniają się przy re-crawlu.
+- Oznaczone strony nie muszą być w bazie: skrypt raportuje pokrycie i dla każdego
+  pudła podaje przyczynę — `crawl` (strony nie ma w bazie) albo `retrieval` (jest,
+  ale nie została znaleziona).
+- Puste `relevant` = pytanie spoza zakresu bazy. Dla takich pytań skrypt pokazuje
+  tylko odległość najlepszego wyniku — porównanie z pytaniami „w zakresie" pomaga
+  dobrać próg odcięcia.
+- Odpalaj przed i po każdej zmianie chunkingu, modelu embeddingów czy sposobu
+  wyszukiwania. Po re-crawlu sprawdź, czy oznaczone URL-e nadal są w bazie.
 
 ## Konfiguracja (`.env`)
 

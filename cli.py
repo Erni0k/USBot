@@ -66,15 +66,16 @@ def embed(text: str) -> list[float]:
     return get_embedder().encode(text, normalize_embeddings=True).tolist()
 
 
-def retrieve(question: str) -> list[dict]:
+def retrieve(question: str, k: int = TOP_K) -> list[dict]:
     qvec = embed(question)
     with psycopg.connect(DATABASE_URL) as conn:
         register_vector(conn)
         rows = conn.execute(
-            "SELECT url, title, content FROM chunks ORDER BY embedding <=> %s::vector LIMIT %s",
-            (qvec, TOP_K),
+            "SELECT url, title, content, embedding <=> %s::vector AS dist "
+            "FROM chunks ORDER BY dist LIMIT %s",
+            (qvec, k),
         ).fetchall()
-    return [{"url": r[0], "title": r[1], "content": r[2]} for r in rows]
+    return [{"url": r[0], "title": r[1], "content": r[2], "dist": r[3]} for r in rows]
 
 
 def build_context(chunks: list[dict]) -> str:
