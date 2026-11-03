@@ -8,6 +8,7 @@ import re
 import time
 from collections import Counter, defaultdict, deque
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from datetime import datetime, timezone
 from typing import NamedTuple
 from urllib.parse import urlsplit
 
@@ -20,10 +21,14 @@ class Page(NamedTuple):
     """Wynik odwiedzenia jednej strony przez crawler."""
     url: str
     status: str                  # "modified" | "unchanged" | "error"
-    text: str | None             # tekst tylko gdy status == "modified"
+    text: str | None             # tekst tylko gdy status == "modified"; naglowki jako "## ..."
     etag: str | None
     last_modified: str | None
     links: list[str]             # linki na stronie (z cache przy "unchanged")
+    # Metadane strony - tylko gdy status == "modified"
+    title: str | None = None              # <title> bez nazwy serwisu
+    page_type: str | None = None          # student | wydzial | static | news | event
+    published_at: datetime | None = None  # data publikacji (aktualnosci, wydarzenia)
 
 SITEMAP = "https://us.edu.pl/sitemap.xml"
 NS = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
@@ -98,10 +103,26 @@ _SKIP_PATTERNS = ("/wp-json", "/wp-content/", "/wp-includes/", "xmlrpc.php", "/f
 # ukryty, ale siedzi w HTML kazdej strony - na krotkich stronach trafilatura brala
 # go za tresc glowna (~13% fragmentow w bazie). Naglowek z menu i paskiem WCAG
 # trafial do tekstu, gdy trafilatura nie znalazla tresci i brala cala strone.
-_BOILERPLATE_XPATH = ('//*[@id="cmplz-cookiebanner-container"] | //*[contains(@class, "cmplz-")]'
+# Wyjatek: "cmplz-document" to tresc strony polityki prywatnosci, nie baner.
+_BOILERPLATE_XPATH = ('//*[@id="cmplz-cookiebanner-container"]'
+                      ' | //*[contains(@class, "cmplz-") and not(contains(@class, "cmplz-document"))]'
                       ' | //header | //footer | //nav | //script | //style | //noscript')
+_HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 _BLOCK_TAGS = ("p", "div", "li", "tr", "br", "section", "article", "table", "ul", "ol",
-               "h1", "h2", "h3", "h4", "h5", "h6")
+               *_HEADING_TAGS)
+
+# Naglowek markdown: "## Tekst". Hashtag bez spacji ("#FunduszeUE") nie jest naglowkiem.
+HEADING_RE = re.compile(r"^(#{1,6})\s+(\S.*?)\s*#*\s*$")
+
+# Nazwy serwisow doklejane na koncu <title> - bez wartosci dla tresci fragmentu.
+_TITLE_SITE_SUFFIX = re.compile(
+    r"\s+[|–—«-]\s+(?:Uniwersytet Śląski w Katowicach|Informacje, wiadomości i komunikaty)$")
+
+_MONTHS = ("stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca", "lipca",
+           "sierpnia", "września", "października", "listopada", "grudnia")
+_DATE_NUM = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b")
+_DATE_WORD = re.compile(r"\b(\d{1,2}) (" + "|".join(_MONTHS) + r") (\d{4})\b", re.IGNORECASE)
+_BLOG_DATE = re.compile(r"/blog/(\d{4})/(\d{2})/(\d{2})/")
 
 # Strony zalacznikow WordPressa (zdjecie lub PDF z podpisem) - bez tresci dla RAG.
 # Ich adres nie zawiera /attachment/ (np. .../sale-wykladowe/dsc00582/), wiec
@@ -136,42 +157,164 @@ def _is_priority(url: str) -> bool:
 
 
 def _main_text(tree) -> str:
-    """Caly tekst elementu <main>, z podzialem na linie po elementach blokowych."""
+    """Caly tekst elementu <main>, z podzialem na linie po elementach blokowych.
+
+    Naglowki h1-h6 zapisujemy jak w markdownie ("## Tekst"), zeby chunking mogl
+    dzielic tekst po sekcjach. Puste naglowki (ozdobniki WPBakery) sa pomijane.
+    """
     main = tree.xpath("//main")
     if not main:
         return ""
+    for h in list(main[0].iter(*_HEADING_TAGS)):
+        text = " ".join(h.text_content().split())
+        for child in list(h):
+            h.remove(child)
+        h.text = f"\n{'#' * int(h.tag[1])} {text}" if text else ""
     for el in main[0].iter(*_BLOCK_TAGS):
         el.tail = "\n" + (el.tail or "")
     lines = (" ".join(line.split()) for line in main[0].text_content().splitlines())
     return "\n".join(line for line in lines if line)
 
 
-def _extract_text(content: bytes) -> str | None:
-    """Wyciaga tresc strony: trafilatura po usunieciu banera, menu i stopki.
+def _clean_markdown(md: str | None) -> str:
+    """Upraszcza markdown z trafilatury: zostawia naglowki, usuwa ozdobniki.
 
+    Pogrubienia (**) to na stronach WPBakery prawie kazda linia - w embeddingu
+    to tylko szum. Puste naglowki ("#####") trafilatura robi z ozdobnych h5.
+    """
+    lines = []
+    for line in (md or "").replace("**", "").splitlines():
+        line = " ".join(line.split())
+        if not line or re.fullmatch(r"#+", line):
+            continue
+        m = HEADING_RE.match(line)
+        lines.append(f"{m.group(1)} {m.group(2)}" if m else line)
+    return "\n".join(lines)
+
+
+def _title(tree) -> str | None:
+    """Tytul strony z <title> (albo <h1>), bez nazwy serwisu.
+
+    "Dziekanat | Wydział Humanistyczny | Uniwersytet Śląski w Katowicach"
+    -> "Dziekanat | Wydział Humanistyczny". Nazwa wydzialu zostaje - to ona
+    odroznia dziekanaty. Bierzemy <title> z <head>: w <body> sa ikony SVG z
+    wlasnym <title> ("Zwiększ tekst").
+    """
+    raw = tree.findtext(".//head/title") or ""
+    if not raw.strip():
+        h1 = tree.xpath("//h1")
+        raw = h1[0].text_content() if h1 else ""
+    title = " ".join(raw.split())
+    while m := _TITLE_SITE_SUFFIX.search(title):
+        title = title[:m.start()]
+    return title or None
+
+
+def _page_type(url: str, tree) -> str:
+    """Typ strony: news / event / student / wydzial / static.
+
+    Aktualnosci rozpoznajemy po typie wpisu WordPressa z klasy <body>
+    (single-post, single-komunikaty, single-event) - to ten sam typ, od ktorego
+    pochodzi nazwa pod-sitemapy (post-, komunikaty-, event-sitemap). Klasa dziala
+    tez dla stron spoza sitemapy: komunikatow portalu studenta i wpisow na
+    stronach wydzialow, znalezionych przez BFS. Reszta - po adresie.
+    """
+    classes = set(" ".join(tree.xpath("//body/@class")).split()) if tree is not None else set()
+    path = urlsplit(url).path
+    if "single-event" in classes or path.startswith("/event/"):
+        return "event"
+    if (classes & {"single-post", "single-komunikaty"} or "/komunikaty/" in path
+            or _BLOG_DATE.search(path)):
+        return "news"
+    if url.startswith("https://us.edu.pl/student/"):
+        return "student"
+    if path.startswith("/wydzial/"):
+        return "wydzial"
+    return "static"
+
+
+def _date_from_text(text: str) -> datetime | None:
+    """Pierwsza data z poczatku tresci: "18.09.2020" albo "18 września 2020"."""
+    head = text[:300]
+    m = _DATE_NUM.search(head)
+    if m:
+        day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = _DATE_WORD.search(head)
+        if not m:
+            return None
+        day, month, year = int(m.group(1)), _MONTHS.index(m.group(2).lower()) + 1, int(m.group(3))
+    try:
+        return datetime(year, month, day, tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _published_at(url: str, tree, text: str | None, page_type: str) -> datetime | None:
+    """Data publikacji: <meta article:published_time>, <time>, adres bloga usnet, tresc.
+
+    Strony informacyjne WordPressa tez maja published_time - to data utworzenia
+    strony (czesto 2019), a nie aktualnosc tresci. Kara za wiek w retrieve()
+    dotyczy wiec tylko news/event; date z tresci szukamy tylko dla nich.
+    """
+    for value in (tree.xpath('//meta[@property="article:published_time"]/@content')
+                  + tree.xpath("//time/@datetime")):
+        try:
+            dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    m = _BLOG_DATE.search(urlsplit(url).path)
+    if m:
+        return datetime(*map(int, m.groups()), tzinfo=timezone.utc)
+    if text and page_type in ("news", "event"):
+        return _date_from_text(text)
+    return None
+
+
+class Extracted(NamedTuple):
+    text: str | None
+    title: str | None
+    page_type: str
+    published_at: datetime | None
+
+
+def _extract(content: bytes, url: str) -> Extracted:
+    """Wyciaga tresc i metadane strony.
+
+    Tresc: trafilatura (markdown z naglowkami) po usunieciu banera, menu i stopki.
     Gdy strona ma <main>, trafilatura dostaje tylko jego zawartosc - inaczej na
     stronach bez tresci zbierala cale <body> (pasek COVID, linki "przejdz do tresci").
     Trafilatura wybiera jeden blok tresci i na stronach portalu (np. akademiki)
     gubi wiekszosc tekstu. Jesli zwrocila mniej niz polowe tego, co jest w <main>,
-    bierzemy caly <main>.
+    bierzemy caly <main> (tez z naglowkami).
     """
     try:
         tree = lxml_html.fromstring(content)
-        for el in tree.xpath(_BOILERPLATE_XPATH):
-            el.drop_tree()
-        main = tree.xpath("//main")
-        if main:
-            html = f"<html><body>{lxml_html.tostring(main[0], encoding='unicode')}</body></html>"
-        else:
-            html = lxml_html.tostring(tree, encoding="unicode")
     except Exception:
-        return trafilatura.extract(content.decode("utf-8", errors="replace"),
-                                   include_comments=False, include_tables=True)
-    text = trafilatura.extract(html, include_comments=False, include_tables=True)
+        text = trafilatura.extract(content.decode("utf-8", errors="replace"), include_comments=False,
+                                   include_tables=True, output_format="markdown")
+        return Extracted(_clean_markdown(text) or None, None, _page_type(url, None), None)
+
+    title = _title(tree)
+    page_type = _page_type(url, tree)
+    for el in tree.xpath(_BOILERPLATE_XPATH):
+        el.drop_tree()
+    main = tree.xpath("//main")
+    if main:
+        html = f"<html><body>{lxml_html.tostring(main[0], encoding='unicode')}</body></html>"
+    else:
+        html = lxml_html.tostring(tree, encoding="unicode")
+    text = _clean_markdown(trafilatura.extract(html, include_comments=False, include_tables=True,
+                                               output_format="markdown"))
     main_text = _main_text(tree)
-    if len(main_text) > 2 * len(text or ""):
-        return main_text
-    return text
+    if len(main_text) > 2 * len(text):
+        text = main_text
+    return Extracted(text or None, title, page_type, _published_at(url, tree, text, page_type))
+
+
+def _extract_text(content: bytes) -> str | None:
+    return _extract(content, "").text
 
 
 def _sitemap_allowed(url: str) -> bool:
@@ -273,15 +416,18 @@ def _fetch(url: str, cache_entry: dict | None, client: httpx.Client | None = Non
     if _ATTACHMENT_BODY.search(resp.content):
         return Page(url, "error", None, None, None, [])
 
-    text = _extract_text(resp.content)
+    ext = _extract(resp.content, url)
     links = _links_from_html(resp.content, url)
     return Page(
         url,
         "modified",
-        text,
+        ext.text,
         resp.headers.get("etag"),
         resp.headers.get("last-modified"),
         links,
+        ext.title,
+        ext.page_type,
+        ext.published_at,
     )
 
 

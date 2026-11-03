@@ -239,6 +239,81 @@ użytkownika. Sprawdzono 13 rozmów testowych (top-1 z historią vs. samo pytani
   znajduje fragment w odległości 0.389). Bot odpowiada wtedy stałym tekstem — tak samo
   jak przy przekroczeniu progu.
 
+**Chunking po sekcjach, prefiks i kara za stare aktualności** (2026-11-03; `CHUNKER_VERSION = 2`).
+Plaski podział `RecursiveCharacterTextSplitter(800, 120)` gubił kontekst: fragment
+„Godziny pracy: pon 10–14" nie mówił, którego dziekanatu dotyczy. Zmiany:
+
+- **Ekstrakcja z nagłówkami.** Sprawdzono `trafilatura.extract(output_format="markdown")`
+  na dziekanatach WH, WNP i WNST, portalu studenta (akademiki), usnet (`/siec/serwer-vpn/`)
+  i `/kontakt/`. Nagłówki są, ale niepełne: na WH jedyny nagłówek to h5 „GODZINY PRACY
+  DZIEKANATU" (resztę strona oznacza pogrubieniem), na WNST trafilatura daje puste `#####`
+  z ozdobnych kafelków, w komunikatach hashtagi `#FunduszeUE` wyglądają jak nagłówki,
+  a na akademikach markdown ma tylko 737 z ~3 800 znaków treści. Dlatego: markdown z
+  trafilatury po czyszczeniu (bez `**`, pustych nagłówków i hashtagów), a gdy gubi ponad
+  połowę treści `<main>` — własny tekst z `<main>` z nagłówkami h1–h6 (`_main_text()`).
+  usnet nie ma `<main>`, ale markdown z trafilatury ma tam pełną strukturę (h1/h2).
+- **Podział po nagłówkach**, za długie sekcje dalej splitterem 800/120. Nagłówek bez
+  treści (h2, a zaraz po nim h3) łączy się z następną sekcją.
+- **Prefiks** `<tytuł strony> > <nagłówek sekcji>` na początku każdego fragmentu (z niego
+  liczony jest embedding), np. `dziekanat | Wydział Nauk Przyrodniczych > Pok. 111 – Godziny
+  pracy:`. Tytuł z `<title>` bez „| Uniwersytet Śląski w Katowicach".
+- **Metadane** `title`, `page_type`, `published_at` w `chunks` (wypełnione dla wszystkich
+  42 397 fragmentów). 25 316 fragmentów (60%) to aktualności i wydarzenia starsze niż 2 lata.
+- **Kara** w `retrieve()`: przy sortowaniu `dist + OLD_NEWS_PENALTY` dla `news`/`event`
+  starszych niż `OLD_NEWS_DAYS` (730). Próg `MAX_DISTANCE` dotyczy nadal samej odległości.
+- Przy okazji: treść strony polityki prywatności (`div.cmplz-document`) była wycinana
+  razem z banerem cookies — reguła usuwania banera ją teraz pomija.
+
+Baza po pełnym przebiegu: **42 397 fragmentów z 12 055 stron** (1A: 39 003 z 12 020;
+nowe strony to głównie aktualności dodane od 2 listopada). Wariant „sam chunking" to kopia
+tej bazy z usuniętym prefiksem (pierwsza linia fragmentu) i embeddingami policzonymi od
+nowa — splitter tnie samą sekcję, więc to dokładnie te same fragmenty bez prefiksu. Etykiet
+nie zmieniano. Pokrycie: bez zmian, 94/95 oznaczonych stron, 48/48 pytań ma trafną stronę
+w bazie.
+
+| Wariant | Hit@1 | Hit@3 | Hit@5 | Hit@8 | Hit@10 | nDCG@8 | nDCG@10 | Recall@10 | MRR@10 | Bez trafienia w top-10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1A (płaski tekst 800/120) | 0.500 | 0.729 | 0.792 | 0.854 | **0.917** | 0.503 | 0.519 | **0.646** | 0.630 | 4 |
+| sam chunking po sekcjach | 0.479 | 0.708 | 0.792 | 0.812 | 0.854 | 0.480 | 0.490 | 0.585 | 0.605 | 7 |
+| **chunking + prefiks** (włączone) | **0.542** | 0.729 | 0.812 | 0.854 | 0.854 | 0.511 | 0.513 | 0.580 | **0.643** | 7 |
+| + kara 0.02 | **0.542** | 0.708 | 0.812 | 0.875 | 0.875 | 0.527 | 0.536 | 0.618 | 0.648 | 6 |
+| + kara 0.05 | 0.521 | 0.708 | 0.812 | **0.875** | 0.875 | **0.530** | **0.541** | 0.637 | 0.633 | 6 |
+| + kara 0.10 | 0.500 | 0.688 | 0.792 | 0.812 | 0.833 | 0.508 | 0.526 | 0.601 | 0.607 | 8 |
+
+Jedno pytanie to 0.021 w kolumnach Hit@k. `TOP_K = 8`, więc Hit@8 i nDCG@8 opisują to,
+co dostaje LLM.
+
+- **Sam chunking pogarsza wynik** we wszystkich metrykach. Krótkie sekcje bez tytułu
+  strony są jeszcze mniej samodzielne niż fragmenty 800-znakowe: „Godziny pracy:" z tabelką
+  pasuje do każdego dziekanatu.
+- **Prefiks to odwraca.** Względem samego chunkingu zysk jest we wszystkich metrykach
+  (Hit@1 +0.06, MRR +0.04), względem 1A — na górze listy: Hit@1 0.500 → 0.542, MRR
+  0.630 → 0.643, Hit@8 bez zmian, nDCG@8 +0.008. Zyskują pytania o dziekanaty, dla których
+  prefiks wnosi nazwę wydziału: `dziekanat-wh` (trafienie z pozycji 4 na 1),
+  `dziekanat-wnst` (7 → 1), a także `rekrutacja-terminy` (8 → 1), `samorzad`, `wf`.
+- **Koszt prefiksu: mniej różnych stron w top-10** (średnio 6.7 zamiast 7.9). Fragmenty
+  jednej strony mają wspólny tytuł, więc są do siebie bardziej podobne i zajmują kilka
+  miejsc naraz. Dlatego Hit@10 spada 0.917 → 0.854: `erasmus`, `haslo-konto` i `wladze`
+  miały w 1A trafienie na pozycji 2–10, a teraz wypadają z top-10 (polskie i angielskie
+  wersje tej samej strony portalu, kilka fragmentów „Kalendarium"). Pomogłoby
+  ograniczenie liczby fragmentów z jednej strony w wynikach — osobna zmiana.
+- **Kara za stare aktualności — zostawiona wyłączona** (`OLD_NEWS_PENALTY=0`). Robi to,
+  do czego jest: wyników z rokiem 2016–2021 w adresie (bez portalu studenta) jest w top-8
+  pytań w zakresie 27 bez kary, 17 przy 0.02 i 6 przy 0.05, a list rektora z 2020 r.
+  znika z top-10 pytań o stypendia (przy 0.05). Na etykietach zysk mieści się jednak w
+  szumie: przy 0.02 poprawia się 6 pytań i pogarsza 3 (`wf` 1 → 2, `irk-rejestracja`,
+  `it-incydent`), przy 0.05 Hit@1 spada o jedno pytanie (`szkola-doktorska` 1 → 2), a
+  0.10 jest wyraźnie gorsze. `wydzialy` nie pomaga żadna wartość — wpisy o rekrutacji z
+  2017 r. są bliżej pytania o ponad 0.05. Kandydat do włączenia: 0.02–0.05, gdy zbiór
+  testowy będzie większy albo gdy priorytetem będzie aktualność kontekstu, nie metryki.
+- **Próg `MAX_DISTANCE` bez zmian (0.43).** Odległość top-1: w zakresie 0.180–0.408
+  (mediana 0.273; było 0.191–0.406), spoza zakresu 0.356–0.577 (mediana 0.407). Przy 0.43
+  odrzucone 0/48 pytań w zakresie i 8/18 spoza zakresu (było 9/18). Utracone trafienia
+  łącznie: 1 — `szkolenia-obowiazkowe` nie jest odrzucane (top-1 0.371, nietrafny), ale
+  jego jedyny trafny fragment w top-8 (`student/studia/obowiazkowe-szkolenia`, pozycja 7)
+  ma 0.465 i próg go odcina. Przy obecnej kolejności wyników w 1A to pytanie też nie
+  dostawało trafnego fragmentu przed progiem (pozycja 10), więc to nie jest regresja progu.
+
 !!! warning "Status"
     Katalog `tests/` jest **planowany** — testy zostaną zaimplementowane w kolejnych
     iteracjach. Powyższe komendy zakładają standardową strukturę pytest.

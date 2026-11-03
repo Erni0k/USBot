@@ -8,6 +8,8 @@ Uruchom:            python ingestion/ingest.py
 Pelny re-crawl:     CRAWL_FRESH=true python ingestion/ingest.py
 Ponowna ekstrakcja: CRAWL_REFETCH=true python ingestion/ingest.py
                     (np. po zmianie ekstrakcji tekstu; embeduje tylko zmienione strony)
+Po zmianie chunkingu podbij CHUNKER_VERSION - kolejny przebieg pobierze i podzieli
+od nowa wszystkie strony zapisane starsza wersja (bez CRAWL_REFETCH).
 Odpalaj okresowo (np. cron raz dziennie), gdy tresci na stronie sie zmienia.
 """
 import hashlib
@@ -37,12 +39,24 @@ EMBED_BATCH   = int(os.getenv("EMBED_BATCH", "16"))   # ile stron naraz do embed
 CRAWL_FRESH   = os.getenv("CRAWL_FRESH", "false").lower() == "true"
 CRAWL_REFETCH = os.getenv("CRAWL_REFETCH", "false").lower() == "true"  # po zmianie ekstrakcji tekstu
 
+# Wersja podzialu na fragmenty (sekcje, prefiks, rozmiar). Zapisywana w pages.chunker_version;
+# strony zapisane inna wersja sa przy starcie pobierane i embedowane od nowa. Sam hash
+# tekstu tego nie zalatwi: zmiana chunkingu nie zmienia tekstu strony, a CRAWL_REFETCH
+# liczy embeddingi tylko dla stron ze zmienionym hashem.
+# 1 - plaski tekst, RecursiveCharacterTextSplitter(800, 120)
+# 2 - podzial po naglowkach, prefiks "<tytul strony> > <naglowek sekcji>"
+CHUNKER_VERSION = 2
+
 splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=120)
 model = SentenceTransformer(EMBED_MODEL)
 
 
 def _ensure_schema(conn: psycopg.Connection) -> None:
-    """Tworzy tabele/indeksy jesli baza wstala bez init.sql."""
+    """Tworzy tabele/indeksy jesli baza wstala bez init.sql i migruje starszy schemat.
+
+    init.sql wykonuje sie tylko przy pierwszym starcie kontenera, wiec nowe kolumny
+    dodajemy tutaj (ADD COLUMN IF NOT EXISTS) - takze w istniejacej bazie.
+    """
     conn.execute("""
         CREATE TABLE IF NOT EXISTS pages (
             url           TEXT PRIMARY KEY,
@@ -53,6 +67,9 @@ def _ensure_schema(conn: psycopg.Connection) -> None:
             last_crawled  TIMESTAMPTZ DEFAULT now()
         )
     """)
+    conn.execute("ALTER TABLE pages ADD COLUMN IF NOT EXISTS chunker_version INT")
+    conn.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS page_type TEXT")
+    conn.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ")
     conn.execute("CREATE INDEX IF NOT EXISTS chunks_url_idx ON chunks (url)")
     conn.commit()
 
@@ -60,10 +77,11 @@ def _ensure_schema(conn: psycopg.Connection) -> None:
 def _load_cache(conn: psycopg.Connection) -> dict[str, dict]:
     """Wczytuje stan poprzedniego crawla z tabeli pages."""
     rows = conn.execute(
-        "SELECT url, etag, last_modified, content_hash, links FROM pages"
+        "SELECT url, etag, last_modified, content_hash, links, chunker_version FROM pages"
     ).fetchall()
     return {
-        r[0]: {"etag": r[1], "last_modified": r[2], "content_hash": r[3], "links": r[4]}
+        r[0]: {"etag": r[1], "last_modified": r[2], "content_hash": r[3], "links": r[4],
+               "chunker_version": r[5]}
         for r in rows
     }
 
@@ -79,8 +97,46 @@ def _purge_excluded(conn: psycopg.Connection) -> int:
     return len(bad)
 
 
-def _hash(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+def _hash(page: scrape.Page) -> str:
+    """Hash wszystkiego, z czego powstaja fragmenty: tekstu i metadanych strony."""
+    key = "\n".join(str(v) for v in (page.title, page.page_type, page.published_at, page.text))
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def _sections(text: str) -> list[tuple[str | None, str]]:
+    """Dzieli tekst na sekcje po naglowkach markdown: [(naglowek, tresc sekcji)].
+
+    Tresc zaczyna sie od naglowka (juz bez "#"). Naglowek bez wlasnej tresci (np. h2,
+    po ktorym od razu jest h3) laczymy z nastepna sekcja - prefiks dostaje wtedy
+    blizszy, bardziej szczegolowy naglowek, a nadrzedny zostaje w tresci.
+    """
+    sections: list[tuple[str | None, list[str]]] = [(None, [])]
+    for line in text.splitlines():
+        m = scrape.HEADING_RE.match(line)
+        if not m:
+            sections[-1][1].append(line)
+            continue
+        heading, lines = sections[-1]
+        if heading is not None and len(lines) == 1:  # sam naglowek bez tresci
+            sections[-1] = (m.group(2), lines + [m.group(2)])
+        else:
+            sections.append((m.group(2), [m.group(2)]))
+    return [(h, "\n".join(lines)) for h, lines in sections if lines]
+
+
+def _chunks(page: scrape.Page) -> list[str]:
+    """Fragmenty strony: sekcje po naglowkach, za dlugie ciete splitterem.
+
+    Kazdy fragment dostaje prefiks "<tytul strony> > <naglowek sekcji>" - bez niego
+    np. "Godziny pracy: pon 10-14" nie mowi, ktorego dziekanatu dotyczy. Prefiks
+    jest czescia tresci, z ktorej liczony jest embedding, i trafia tez do LLM-a.
+    """
+    chunks = []
+    for heading, body in _sections(page.text):
+        prefix = " > ".join(p for p in (page.title, heading) if p)
+        for part in splitter.split_text(body):
+            chunks.append(f"{prefix}\n{part}" if prefix else part)
+    return chunks
 
 
 def _touch_page(conn: psycopg.Connection, page: scrape.Page) -> None:
@@ -120,24 +176,27 @@ def _flush(conn: psycopg.Connection, pending: list[dict]) -> None:
             cur.execute("DELETE FROM chunks WHERE url = %s", (p["url"],))
             for chunk, emb in zip(chunks, embs):
                 cur.execute(
-                    "INSERT INTO chunks (url, content, embedding) VALUES (%s, %s, %s)",
-                    (p["url"], chunk, emb),
+                    "INSERT INTO chunks (url, title, page_type, published_at, content, embedding) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    (p["url"], p["title"], p["page_type"], p["published_at"], chunk, emb),
                 )
 
             # Zapisz nowy stan strony
             cur.execute(
                 """
-                INSERT INTO pages (url, etag, last_modified, content_hash, links, last_crawled)
-                VALUES (%s, %s, %s, %s, %s, now())
+                INSERT INTO pages (url, etag, last_modified, content_hash, links,
+                                   chunker_version, last_crawled)
+                VALUES (%s, %s, %s, %s, %s, %s, now())
                 ON CONFLICT (url) DO UPDATE SET
-                    etag          = EXCLUDED.etag,
-                    last_modified = EXCLUDED.last_modified,
-                    content_hash  = EXCLUDED.content_hash,
-                    links         = EXCLUDED.links,
-                    last_crawled  = now()
+                    etag            = EXCLUDED.etag,
+                    last_modified   = EXCLUDED.last_modified,
+                    content_hash    = EXCLUDED.content_hash,
+                    links           = EXCLUDED.links,
+                    chunker_version = EXCLUDED.chunker_version,
+                    last_crawled    = now()
                 """,
                 (p["url"], p["etag"], p["last_modified"], p["hash"],
-                 json.dumps(p["links"]) if p["links"] else None),
+                 json.dumps(p["links"]) if p["links"] else None, CHUNKER_VERSION),
             )
     conn.commit()
 
@@ -166,6 +225,14 @@ def run() -> None:
                 print("CRAWL_REFETCH=true -> pobieram wszystkie strony od nowa")
                 for entry in cache.values():
                     entry["etag"] = entry["last_modified"] = None
+            # Strony podzielone inna wersja chunkera: pobierz od nowa (bez 304) i zignoruj
+            # hash, zeby zostaly podzielone i embedowane ponownie.
+            stale = [e for e in cache.values() if e["chunker_version"] != CHUNKER_VERSION]
+            if stale:
+                print(f"{len(stale)} stron podzielonych inna wersja chunkera "
+                      f"-> pobieram i embeduje od nowa (CHUNKER_VERSION={CHUNKER_VERSION})")
+                for entry in stale:
+                    entry["etag"] = entry["last_modified"] = entry["content_hash"] = None
 
         bar = tqdm(
             scrape.crawl(limit=CRAWL_LIMIT, max_depth=CRAWL_DEPTH,
@@ -189,7 +256,7 @@ def run() -> None:
             if not page.text:
                 continue
 
-            new_hash = _hash(page.text)
+            new_hash = _hash(page)
             old_hash = cache.get(page.url, {}).get("content_hash")
 
             # Pobrano tresc, ale jest identyczna jak poprzednio -> bez re-embeddingu
@@ -203,7 +270,10 @@ def run() -> None:
             n_new += 1
             pending.append({
                 "url": page.url,
-                "chunks": splitter.split_text(page.text),
+                "chunks": _chunks(page),
+                "title": page.title,
+                "page_type": page.page_type,
+                "published_at": page.published_at,
                 "etag": page.etag,
                 "last_modified": page.last_modified,
                 "links": page.links,

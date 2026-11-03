@@ -30,6 +30,11 @@ TOP_K        = int(os.getenv("TOP_K", "5"))
 # Fragmenty dalsze niż próg (odległość kosinusowa) są odrzucane; gdy nie zostanie
 # żaden, bot odpowiada NO_INFO bez wywołania LLM-a. Wybór progu: docs/testy.md (6.4).
 MAX_DISTANCE = float(os.getenv("MAX_DISTANCE", "0.43"))
+# Kara do odległości (tylko przy sortowaniu) dla aktualności i wydarzeń starszych niż
+# OLD_NEWS_DAYS — żeby np. list rektora z 2020 r. nie wygrywał ze stroną informacyjną.
+# 0 = wyłączone. Wpływ na wyniki: docs/testy.md (6.4).
+OLD_NEWS_PENALTY = float(os.getenv("OLD_NEWS_PENALTY", "0"))
+OLD_NEWS_DAYS = int(os.getenv("OLD_NEWS_DAYS", "730"))
 ENABLE_THINKING = os.getenv("ENABLE_THINKING", "false").lower() == "true"
 
 NO_INFO = "Nie mam tej informacji – sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
@@ -71,21 +76,35 @@ def embed(text: str) -> list[float]:
     return get_embedder().encode(text, normalize_embeddings=True).tolist()
 
 
-def retrieve(question: str, k: int = TOP_K, max_distance: float | None = MAX_DISTANCE) -> list[dict]:
+def retrieve(question: str, k: int = TOP_K, max_distance: float | None = MAX_DISTANCE,
+             penalty: float = OLD_NEWS_PENALTY) -> list[dict]:
     """Zwraca do k najbliższych fragmentów; z `max_distance` tylko te nie dalsze niż próg.
 
     Próg sprawdzamy w Pythonie, nie w SQL: przy indeksie HNSW warunek WHERE na
     odległość filtruje dopiero kandydatów z indeksu i może zwrócić za mało wyników.
+
+    Z `penalty` > 0 fragmenty starych aktualności/wydarzeń dostają `score` = dist +
+    penalty i według niego są sortowane — pobieramy wtedy więcej kandydatów, żeby
+    było z czego wybierać. Próg nadal dotyczy samej odległości (`dist`).
     """
     qvec = embed(question)
+    n = max(4 * k, 40) if penalty else k
     with psycopg.connect(DATABASE_URL) as conn:
         register_vector(conn)
+        if n > 40:  # domyślny hnsw.ef_search = 40 to też limit liczby wyników
+            conn.execute(f"SET hnsw.ef_search = {int(n)}")
         rows = conn.execute(
-            "SELECT id, url, title, content, embedding <=> %s::vector AS dist "
+            "SELECT id, url, title, content, page_type, published_at, "
+            "       embedding <=> %s::vector AS dist, "
+            "       page_type IN ('news', 'event') "
+            "         AND published_at < now() - make_interval(days => %s) AS old_news "
             "FROM chunks ORDER BY dist LIMIT %s",
-            (qvec, k),
+            (qvec, OLD_NEWS_DAYS, n),
         ).fetchall()
-    chunks = [{"id": r[0], "url": r[1], "title": r[2], "content": r[3], "dist": r[4]} for r in rows]
+    chunks = [{"id": r[0], "url": r[1], "title": r[2], "content": r[3], "page_type": r[4],
+               "published_at": r[5], "dist": r[6], "score": r[6] + (penalty if r[7] else 0.0)}
+              for r in rows]
+    chunks = sorted(chunks, key=lambda c: c["score"])[:k]
     if max_distance is not None:
         chunks = [c for c in chunks if c["dist"] <= max_distance]
     return chunks
@@ -119,9 +138,9 @@ def retrieve_for_chat(history: list[dict], k: int = TOP_K, max_distance: float =
     best: dict[int, dict] = {}
     for query in dict.fromkeys([build_query(history), last]):
         for c in retrieve(query, k=k, max_distance=None):
-            if c["id"] not in best or c["dist"] < best[c["id"]]["dist"]:
+            if c["id"] not in best or c["score"] < best[c["id"]]["score"]:
                 best[c["id"]] = c
-    chunks = sorted(best.values(), key=lambda c: c["dist"])[:k]
+    chunks = sorted(best.values(), key=lambda c: c["score"])[:k]
     return [c for c in chunks if c["dist"] <= max_distance]
 
 

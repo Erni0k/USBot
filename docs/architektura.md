@@ -23,7 +23,7 @@ Użytkownik (terminal)
 
  [Oddzielny proces — aktualizacja wiedzy]
  ingestion/ingest.py ──► scrape.crawl()  (BFS, równoległy fetch, 304)
-                         chunking (langchain-text-splitters)
+                         chunking po nagłówkach + prefiks tytułu/sekcji
                          batch embed ──► UPSERT chunks + pages
 ```
 
@@ -69,8 +69,17 @@ priorytetowych seedów i sitemapy. Kluczowe mechanizmy:
 - **Requesty warunkowe** — nagłówki `If-None-Match` / `If-Modified-Since`; gdy
   serwer zwróci `304 Not Modified`, strona nie jest pobierana, a BFS kontynuuje z
   linków zapisanych w cache.
-- **Deduplikacja po treści** — SHA-256 wyekstrahowanego tekstu; jeśli hash bez
-  zmian, pomijany jest kosztowny re-embedding.
+- **Struktura i metadane** — ekstrakcja zachowuje nagłówki h1–h6 (markdown z
+  trafilatury, a przy fallbacku na `<main>` — własny), zapisuje tytuł strony (`<title>`
+  bez nazwy serwisu), typ (`student`, `wydzial`, `static`, `news`, `event`; aktualności
+  po klasie `<body>` WordPressa) i datę publikacji.
+- **Chunking po sekcjach** — tekst dzielony po nagłówkach, długie sekcje dalej przez
+  `RecursiveCharacterTextSplitter(800, 120)`. Każdy fragment zaczyna się prefiksem
+  `<tytuł strony> > <nagłówek sekcji>`, z którego liczony jest też embedding.
+- **Deduplikacja po treści** — SHA-256 wyekstrahowanego tekstu i metadanych; jeśli hash
+  bez zmian, pomijany jest kosztowny re-embedding. Zmiana chunkingu nie zmienia hasha,
+  dlatego `pages.chunker_version` pamięta wersję podziału (`CHUNKER_VERSION`), a strony
+  z inną wersją są pobierane i embedowane od nowa.
 - **Aktualizacja per-URL** — zamiast `TRUNCATE` całej tabeli, zmienione strony mają
   podmieniane fragmenty (`DELETE` + `INSERT`), a stan zapisywany w tabeli `pages`.
 

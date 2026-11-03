@@ -137,7 +137,9 @@ def main() -> None:
         row = {
             "id": q["id"],
             "question": q["question"],
-            "top1_dist": float(chunks[0]["dist"]) if chunks else None,
+            # Najmniejsza odległość, nie odległość pierwszego wyniku: przy karze za stare
+            # aktualności (OLD_NEWS_PENALTY) kolejność nie musi iść według odległości.
+            "top1_dist": min(float(c["dist"]) for c in chunks) if chunks else None,
             "retrieved": ranked,
             "dists": [round(float(c["dist"]), 4) for c in chunks],
         }

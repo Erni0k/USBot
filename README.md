@@ -112,6 +112,33 @@ odświeżenie od zera: `CRAWL_FRESH=true` (czyści `chunks` i `pages`).
 Po zmianie sposobu ekstrakcji tekstu użyj `CRAWL_REFETCH=true` — pobiera wszystkie
 strony od nowa (bez 304), ale embeddingi liczy tylko dla stron, których tekst się zmienił.
 
+**Zmiana chunkingu wymaga podbicia `CHUNKER_VERSION`** (stała w `ingestion/ingest.py`).
+Inny podział na fragmenty nie zmienia tekstu strony, więc hash się nie zmieni i ani
+zwykły przebieg, ani `CRAWL_REFETCH` nie przeliczą embeddingów — w bazie zostałyby
+stare fragmenty. Wersja, którą podzielono stronę, jest zapisana w `pages.chunker_version`.
+Przy starcie ingestia wybiera strony z inną wersją, pomija dla nich nagłówki warunkowe
+i hash, więc zwykłe `python ingestion/ingest.py` pobierze je, podzieli i zaembeduje od
+nowa. Strony, do których przebieg nie dojdzie przed `CRAWL_LIMIT`, zostają ze starą
+wersją i zostaną przeliczone w kolejnym przebiegu.
+
+**Chunking po sekcjach.** Ekstrakcja zachowuje nagłówki strony (`#`–`######`): trafilatura
+w trybie markdown, a gdy gubi treść — własny tekst z `<main>` z nagłówkami. Tekst jest
+dzielony po nagłówkach; sekcje dłuższe niż 800 znaków tnie dalej
+`RecursiveCharacterTextSplitter(800, 120)`. Każdy fragment zaczyna się od prefiksu
+`<tytuł strony> > <nagłówek sekcji>`, np. `dziekanat | Wydział Nauk Przyrodniczych >
+Godziny pracy:` — z niego też liczony jest embedding, więc „Godziny pracy: pon 10–14"
+nie traci informacji, którego dziekanatu dotyczy. Tytuł to `<title>` bez nazwy serwisu
+(„| Uniwersytet Śląski w Katowicach").
+
+**Metadane fragmentów** (`chunks`): `title`, `page_type` (`student` — portal studenta,
+`wydzial`, `news` — aktualności i komunikaty, `event` — wydarzenia, `static` — reszta) i
+`published_at` (z `<meta property="article:published_time">`, `<time>`, adresu bloga usnet
+albo daty na początku treści). Aktualności rozpoznawane są po typie wpisu WordPressa z
+klasy `<body>` (`single-post`, `single-komunikaty`, `single-event` — te same typy, od
+których pochodzą nazwy pod-sitemap), co działa też dla stron spoza sitemapy, np.
+komunikatów portalu studenta. Nowe kolumny dodaje migracja w `_ensure_schema()` —
+`init.sql` wykonuje się tylko przy pierwszym starcie kontenera.
+
 **Kolejność i filtrowanie:**
 
 - Najpierw crawlowana jest **kolejka priorytetowa**: seedy (`FALLBACK_URLS` w
@@ -189,6 +216,8 @@ Format jednej linii `queries.jsonl`:
 | `EMBED_MODEL` | model embeddingów | `BAAI/bge-m3` |
 | `TOP_K` | ile fragmentów z bazy trafia do kontekstu | `8` |
 | `MAX_DISTANCE` | maks. odległość kosinusowa fragmentu; gdy żaden się nie mieści, bot odpowiada „Nie mam tej informacji…" bez wywołania LLM-a | `0.43` |
+| `OLD_NEWS_PENALTY` | kara dodawana do odległości (tylko przy sortowaniu) dla aktualności i wydarzeń starszych niż `OLD_NEWS_DAYS`; `0` = wyłączone | `0` |
+| `OLD_NEWS_DAYS` | od ilu dni aktualność/wydarzenie jest „stare" | `730` |
 | `ENABLE_THINKING` | tryb rozumowania Qwen3 (wolniejszy) | `false` |
 | `CRAWL_LIMIT` | maks. liczba stron na jeden crawl | `6000` |
 | `CRAWL_DEPTH` | głębokość BFS (0 = tylko sitemap + seedy) | `3` |
