@@ -18,7 +18,8 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import psycopg
 from pgvector.psycopg import register_vector
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import CrossEncoder, SentenceTransformer
+import torch
 
 load_dotenv()
 
@@ -45,6 +46,14 @@ RETRIEVAL_MODE = os.getenv("RETRIEVAL_MODE", "vector").strip().lower()
 if RETRIEVAL_MODE not in ("vector", "hybrid"):
     raise ValueError(f"RETRIEVAL_MODE musi być 'vector' albo 'hybrid', jest {RETRIEVAL_MODE!r}")
 RRF_K = 60  # stała w RRF: score = Σ 1/(RRF_K + pozycja)
+# Reranking: RERANK_CANDIDATES najlepszych fragmentów (z trybu RETRIEVAL_MODE) ocenia
+# cross-encoder i zostaje TOP_K z najwyższym wynikiem. Porównanie i czasy: docs/testy.md (6.4).
+RERANK = os.getenv("RERANK", "false").lower() == "true"
+RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANK_CANDIDATES = 20
+# Przy RERANK=true próg dotyczy wyniku rerankera (0–1, większy = lepszy), nie odległości:
+# fragmenty z wynikiem niższym niż MIN_RERANK_SCORE są odrzucane. Wybór: docs/testy.md (6.4).
+MIN_RERANK_SCORE = float(os.getenv("MIN_RERANK_SCORE", "0.01"))
 ENABLE_THINKING = os.getenv("ENABLE_THINKING", "false").lower() == "true"
 
 NO_INFO = "Nie mam tej informacji – sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
@@ -84,6 +93,30 @@ def get_embedder() -> SentenceTransformer:
 
 def embed(text: str) -> list[float]:
     return get_embedder().encode(text, normalize_embeddings=True).tolist()
+
+
+@lru_cache(maxsize=1)
+def get_reranker() -> CrossEncoder:
+    print("Ładowanie modelu rerankera (pierwsze uruchomienie może chwilę potrwać)...", flush=True)
+    # 512 tokenów jak w FlagEmbedding; najdłuższy fragment (prefiks + 800 znaków) ma mniej.
+    # Na GPU fp16: ~3× szybciej niż fp32, wyniki ewaluacji praktycznie te same (docs/testy.md, 6.4).
+    fp16 = {"torch_dtype": torch.float16} if torch.cuda.is_available() else None
+    return CrossEncoder(RERANK_MODEL, max_length=512, model_kwargs=fp16)
+
+
+def rerank(queries: list[str], chunks: list[dict]) -> list[dict]:
+    """Sortuje fragmenty malejąco według wyniku cross-encodera (`rerank`, 0–1).
+
+    Przy kilku zapytaniach (retrieve_for_chat) fragment dostaje najlepszy z wyników —
+    tak jak `score` z dwóch wyszukiwań. Przy remisie decyduje dotychczasowa kolejność.
+    """
+    if not chunks:
+        return []
+    pairs = [(q, c["content"]) for q in queries for c in chunks]
+    scores = get_reranker().predict(pairs).reshape(len(queries), len(chunks)).max(axis=0)
+    for c, s in zip(chunks, scores):
+        c["rerank"] = float(s)
+    return sorted(chunks, key=lambda c: (-c["rerank"], *_rank(c)))
 
 
 # Słowa pytań, które nic nie mówią wyszukiwarce pełnotekstowej (po unaccent). Konfiguracja
@@ -238,23 +271,41 @@ def _select(chunks: list[dict], k: int, max_per_url: int = MAX_PER_URL) -> list[
 
 def retrieve(question: str, k: int = TOP_K, max_distance: float | None = MAX_DISTANCE,
              penalty: float = OLD_NEWS_PENALTY, max_per_url: int = MAX_PER_URL,
-             mode: str = RETRIEVAL_MODE) -> list[dict]:
-    """Zwraca do k najlepszych fragmentów; z `max_distance` tylko te nie dalsze niż próg.
+             mode: str = RETRIEVAL_MODE, use_rerank: bool = RERANK,
+             min_score: float | None = MIN_RERANK_SCORE) -> list[dict]:
+    """Zwraca do k najlepszych fragmentów, bez tych poniżej progu.
 
     `mode` (domyślnie RETRIEVAL_MODE): "vector" — według odległości wektorowej,
-    "hybrid" — patrz retrieve_hybrid().
+    "hybrid" — patrz retrieve_hybrid(). Z `use_rerank` z RERANK_CANDIDATES najlepszych
+    zostaje k z najwyższym wynikiem rerankera (rerank()).
 
-    Próg sprawdzamy w Pythonie, nie w SQL: przy indeksie HNSW warunek WHERE na
-    odległość filtruje dopiero kandydatów z indeksu i może zwrócić za mało wyników.
+    Próg (_cutoff): bez rerankingu `max_distance` na odległości, z rerankingiem
+    `min_score` na wyniku rerankera; None = bez progu. Sprawdzamy go w Pythonie, nie w
+    SQL: przy indeksie HNSW warunek WHERE na odległość filtruje dopiero kandydatów z
+    indeksu i może zwrócić za mało wyników.
 
     Z `penalty` > 0 fragmenty starych aktualności/wydarzeń dostają `score` = dist +
     penalty i według niego są sortowane. Próg nadal dotyczy samej odległości (`dist`).
-    Duplikaty treści i limit fragmentów z jednej strony: _select().
+    Duplikaty treści i limit fragmentów z jednej strony: _select() — przed
+    rerankingiem, więc wynik rerankera ich nie przywraca.
     """
-    chunks = _select(_candidates(question, k, penalty, mode), k, max_per_url)
-    if max_distance is not None:
-        chunks = [c for c in chunks if c["dist"] <= max_distance]
-    return chunks
+    n = max(k, RERANK_CANDIDATES) if use_rerank else k
+    chunks = _select(_candidates(question, n, penalty, mode), n, max_per_url)
+    if use_rerank:
+        chunks = rerank([question], chunks)[:k]
+    return _cutoff(chunks, max_distance, min_score, use_rerank)
+
+
+def _cutoff(chunks: list[dict], max_distance: float | None, min_score: float | None,
+            use_rerank: bool) -> list[dict]:
+    """Próg na jednej skali: z rerankingiem `min_score` (wynik rerankera), bez — `max_distance`.
+
+    Z rerankingiem próg odległości nie działa: odcinałby fragmenty dalekie wektorowo,
+    które reranker ocenił wysoko (docs/testy.md, 6.4). None = bez progu.
+    """
+    if use_rerank:
+        return chunks if min_score is None else [c for c in chunks if c["rerank"] >= min_score]
+    return chunks if max_distance is None else [c for c in chunks if c["dist"] <= max_distance]
 
 
 def retrieve_hybrid(question: str, k: int = TOP_K, max_distance: float | None = MAX_DISTANCE,
@@ -287,23 +338,29 @@ def build_query(history: list[dict], turns: int = 3) -> str:
 
 
 def retrieve_for_chat(history: list[dict], k: int = TOP_K, max_distance: float = MAX_DISTANCE,
-                      mode: str = RETRIEVAL_MODE) -> list[dict]:
+                      mode: str = RETRIEVAL_MODE, use_rerank: bool = RERANK,
+                      min_score: float = MIN_RERANK_SCORE) -> list[dict]:
     """Szuka zapytaniem z historii (build_query) i samym ostatnim pytaniem, łączy wyniki.
 
     Historia ratuje follow-upy ("a wnst?" samo jest daleko od wszystkiego), ale po
     zmianie tematu wcześniejsze pytania psują zapytanie — po "przepis na pierogi"
     pytanie o urlop dziekański z historią byłoby odrzucone, choć samo pasuje dobrze.
     Każdy fragment dostaje lepszy z dwóch wyników (`score`: odległość albo −RRF);
-    duplikaty, limit na stronę (_select) i próg stosujemy po złączeniu.
+    duplikaty, limit na stronę (_select) i próg stosujemy po złączeniu. Reranker
+    ocenia złączone fragmenty oboma zapytaniami i też bierze lepszy wynik.
     """
     last = next(m["content"] for m in reversed(history) if m["role"] == "user")
+    queries = list(dict.fromkeys([build_query(history), last]))
+    n = max(k, RERANK_CANDIDATES) if use_rerank else k
     best: dict[int, dict] = {}
-    for query in dict.fromkeys([build_query(history), last]):
-        for c in _candidates(query, k, mode=mode):
+    for query in queries:
+        for c in _candidates(query, n, mode=mode):
             if c["id"] not in best or c["score"] < best[c["id"]]["score"]:
                 best[c["id"]] = c
-    chunks = _select(sorted(best.values(), key=_rank), k)
-    return [c for c in chunks if c["dist"] <= max_distance]
+    chunks = _select(sorted(best.values(), key=_rank), n)
+    if use_rerank:
+        chunks = rerank(queries, chunks)[:k]
+    return _cutoff(chunks, max_distance, min_score, use_rerank)
 
 
 def main() -> None:

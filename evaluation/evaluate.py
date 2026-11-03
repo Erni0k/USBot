@@ -18,6 +18,8 @@ Inne k / szczegóły: python evaluation/evaluate.py --k 1 3 5 10 20 --verbose
 Zapis wyników:      python evaluation/evaluate.py --out wyniki.json
 Dobór MAX_DISTANCE: python evaluation/evaluate.py --threshold-sweep
 Tryb wyszukiwania:  python evaluation/evaluate.py --mode hybrid   (domyślnie RETRIEVAL_MODE)
+Reranking:          python evaluation/evaluate.py --rerank        (domyślnie RERANK; --no-rerank)
+                    z --threshold-sweep: próg na odległości i na wyniku rerankera
 """
 import argparse
 import json
@@ -29,7 +31,8 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from cli import DATABASE_URL, MAX_DISTANCE, RETRIEVAL_MODE, TOP_K, retrieve  # noqa: E402
+from cli import (DATABASE_URL, MAX_DISTANCE, MIN_RERANK_SCORE, RERANK,  # noqa: E402
+                 RETRIEVAL_MODE, TOP_K, retrieve)
 
 QUERIES = Path(__file__).with_name("queries.jsonl")
 
@@ -87,33 +90,48 @@ def reciprocal_rank(ranked_urls: list[str], relevant: dict[str, int]) -> float:
     return 0.0
 
 
-def threshold_sweep(answerable: list[dict], out_of_scope: list[dict], queries: list[dict], k: int) -> None:
-    """Skutki progu MAX_DISTANCE dla progów 0.30–0.60.
+# Skale progu dla --threshold-sweep: (pole wiersza, progi, czy wartość musi być ≥ progu)
+DIST_SCALE = ("dists", [s / 100 for s in range(30, 61)], False)
+RERANK_SCALE = ("rerank", [0.001, 0.002, 0.005, 0.01, 0.02, 0.03, 0.05, 0.07, 0.1, 0.15,
+                           0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], True)
 
-    Pytanie jest odrzucane (bot odpowiada bez LLM-a), gdy nawet najlepszy fragment
-    jest dalej niż próg. Strata = odrzucone pytanie w zakresie, które miało trafną
+
+def threshold_sweep(answerable: list[dict], out_of_scope: list[dict], queries: list[dict], k: int,
+                    scale: tuple, current: str) -> None:
+    """Skutki progu na wybranej skali: odległość (DIST_SCALE) albo wynik rerankera (RERANK_SCALE).
+
+    Pytanie jest odrzucane (bot odpowiada bez LLM-a), gdy żaden fragment z top-k nie
+    przechodzi progu. Strata = odrzucone pytanie w zakresie, które miało trafną
     stronę w top-k. Próg może też odciąć trafne fragmenty pytania, które nie zostało
-    odrzucone (zostają tylko bliższe, nietrafne) — ostatnia kolumna liczy oba przypadki.
+    odrzucone (zostają tylko inne, nietrafne) — kolumna „utracone łącznie” liczy oba
+    przypadki. Hit@1 i Hit@k po progu liczone są na tym, co zostaje — to dostaje LLM.
     """
+    key, thresholds, at_least = scale
     by_id = {q["id"]: q for q in queries}
-    print(f"\nPróg odcięcia (k = {k}; obecnie MAX_DISTANCE = {MAX_DISTANCE}):")
+    print(f"\nPróg odcięcia na skali {key!r} (k = {k}; obecnie {current}):")
     print(f"{'próg':>6} {'spoza odrzucone':>16} {'w zakresie odrzucone':>21} "
-          f"{'w tym z trafieniem (strata)':>28} {'trafienia utracone łącznie':>27}")
-    for step in range(30, 61):
-        t = step / 100
-        oos = sum(r["top1_dist"] is None or r["top1_dist"] > t for r in out_of_scope)
-        rejected = lost = lost_total = 0
+          f"{'w tym z trafieniem (strata)':>28} {'trafienia utracone łącznie':>27} "
+          f"{'Hit@1 po progu':>15} {f'Hit@{k} po progu':>15}")
+    for t in thresholds:
+        def kept(r: dict) -> list[str]:
+            return [u for u, v in zip(r["retrieved"][:k], r[key][:k])
+                    if (v >= t if at_least else v <= t)]
+
+        oos = sum(not kept(r) for r in out_of_scope)
+        rejected = lost = lost_total = hit1 = hitk = 0
         for r in answerable:
             rel = by_id[r["id"]]["relevant"]
-            top = list(zip(r["retrieved"][:k], r["dists"][:k]))
-            had_hit = any(u in rel for u, _ in top)
-            kept_hit = any(u in rel and d <= t for u, d in top)
-            if r["top1_dist"] is None or r["top1_dist"] > t:
+            had_hit = any(u in rel for u in r["retrieved"][:k])
+            left = kept(r)
+            if not left:
                 rejected += 1
                 lost += had_hit
-            lost_total += had_hit and not kept_hit
-        print(f"{t:>6.2f} {f'{oos}/{len(out_of_scope)}':>16} {f'{rejected}/{len(answerable)}':>21} "
-              f"{lost:>28} {lost_total:>27}")
+            lost_total += had_hit and not any(u in rel for u in left)
+            hit1 += bool(left) and left[0] in rel
+            hitk += any(u in rel for u in left)
+        n = len(answerable)
+        print(f"{t:>6g} {f'{oos}/{len(out_of_scope)}':>16} {f'{rejected}/{n}':>21} "
+              f"{lost:>28} {lost_total:>27} {hit1 / n:>15.3f} {hitk / n:>15.3f}")
 
 
 def main() -> None:
@@ -123,9 +141,12 @@ def main() -> None:
     ap.add_argument("--verbose", action="store_true", help="pokaż zwrócone URL-e dla pytań bez trafienia")
     ap.add_argument("--out", type=Path, help="zapisz wyniki per pytanie do pliku JSON")
     ap.add_argument("--threshold-sweep", action="store_true",
-                    help=f"pokaż skutki progu MAX_DISTANCE 0.30–0.60 (straty liczone w top-TOP_K = {TOP_K})")
+                    help=f"pokaż skutki progu MAX_DISTANCE 0.30–0.60, z --rerank także progu na "
+                         f"wyniku rerankera (straty liczone w top-TOP_K = {TOP_K})")
     ap.add_argument("--mode", choices=["vector", "hybrid"], default=RETRIEVAL_MODE,
                     help=f"tryb wyszukiwania (domyślnie RETRIEVAL_MODE = {RETRIEVAL_MODE})")
+    ap.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=RERANK,
+                    help=f"reranking cross-encoderem (domyślnie RERANK = {RERANK})")
     args = ap.parse_args()
 
     queries = load_queries(args.file)
@@ -136,7 +157,8 @@ def main() -> None:
 
     per_query = []
     for q in queries:
-        chunks = retrieve(q["question"], k=fetch_k, max_distance=None, mode=args.mode)
+        chunks = retrieve(q["question"], k=fetch_k, max_distance=None, mode=args.mode,
+                          use_rerank=args.rerank, min_score=None)
         ranked = [norm_url(c["url"]) for c in chunks]
         row = {
             "id": q["id"],
@@ -147,6 +169,8 @@ def main() -> None:
             "retrieved": ranked,
             "dists": [round(float(c["dist"]), 4) for c in chunks],
         }
+        if args.rerank:
+            row["rerank"] = [round(c["rerank"], 5) for c in chunks]
         if q["relevant"]:
             row["rr"] = reciprocal_rank(ranked[:max_k], q["relevant"])
             row["scores"] = {k: score(ranked, q["relevant"], k) for k in ks}
@@ -160,7 +184,7 @@ def main() -> None:
     by_id = {q["id"]: q for q in queries}
     reachable = [r for r in answerable if indexed & by_id[r["id"]]["relevant"].keys()]
 
-    print(f"\nTryb: {args.mode}. Pytania: {len(answerable)} w zakresie, "
+    print(f"\nTryb: {args.mode}{' + rerank' if args.rerank else ''}. Pytania: {len(answerable)} w zakresie, "
           f"{len(out_of_scope)} spoza zakresu\n")
     print(f"{'k':>4} {'Hit@k':>8} {'Recall@k':>9} {'Prec@k':>8} {'nDCG@k':>8}   {'Hit@k (odp. w bazie)':>20}"
           f" {'różnych stron':>14}")
@@ -178,13 +202,24 @@ def main() -> None:
         d = [r["top1_dist"] for r in rows if r["top1_dist"] is not None]
         if d:
             print(f"  {name:<14} {min(d):.3f} / {statistics.median(d):.3f} / {max(d):.3f}")
+    if args.rerank:
+        print("Najwyższy wynik rerankera (min / mediana / max):")
+        for name, rows in (("w zakresie", answerable), ("spoza zakresu", out_of_scope)):
+            s = [max(r["rerank"]) for r in rows if r["rerank"]]
+            if s:
+                print(f"  {name:<14} {min(s):.4f} / {statistics.median(s):.4f} / {max(s):.4f}")
 
     if args.threshold_sweep:
-        threshold_sweep(answerable, out_of_scope, queries, TOP_K)
+        threshold_sweep(answerable, out_of_scope, queries, TOP_K, DIST_SCALE,
+                        f"MAX_DISTANCE = {MAX_DISTANCE}")
+        if args.rerank:
+            threshold_sweep(answerable, out_of_scope, queries, TOP_K, RERANK_SCALE,
+                            f"MIN_RERANK_SCORE = {MIN_RERANK_SCORE}")
         if args.verbose:
-            print("\nSpoza zakresu wg odległości top-1:")
+            print("\nSpoza zakresu wg odległości top-1 (z --rerank także najwyższy wynik rerankera):")
             for r in sorted(out_of_scope, key=lambda r: r["top1_dist"] or 1):
-                print(f"  {r['top1_dist']:.3f}  [{r['id']}] {r['question']}")
+                best = f"  {max(r['rerank']):.4f}" if r.get("rerank") else ""
+                print(f"  {r['top1_dist']:.3f}{best}  [{r['id']}] {r['question']}")
 
     labeled = {u for q in queries for u in q["relevant"]}
     best = {u for q in queries for u, g in q["relevant"].items() if g == max(q["relevant"].values())}
