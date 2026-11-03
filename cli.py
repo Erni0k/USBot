@@ -39,6 +39,12 @@ OLD_NEWS_DAYS = int(os.getenv("OLD_NEWS_DAYS", "730"))
 # Najwyżej tyle fragmentów z jednej strony (URL-a) w wynikach; 0 = bez limitu.
 # Wybór wartości: docs/testy.md (6.4).
 MAX_PER_URL = int(os.getenv("MAX_PER_URL", "2"))
+# vector = samo wyszukiwanie wektorowe; hybrid = wektorowe + pełnotekstowe połączone
+# przez RRF (retrieve_hybrid). Porównanie trybów: docs/testy.md (6.4).
+RETRIEVAL_MODE = os.getenv("RETRIEVAL_MODE", "vector").strip().lower()
+if RETRIEVAL_MODE not in ("vector", "hybrid"):
+    raise ValueError(f"RETRIEVAL_MODE musi być 'vector' albo 'hybrid', jest {RETRIEVAL_MODE!r}")
+RRF_K = 60  # stała w RRF: score = Σ 1/(RRF_K + pozycja)
 ENABLE_THINKING = os.getenv("ENABLE_THINKING", "false").lower() == "true"
 
 NO_INFO = "Nie mam tej informacji – sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
@@ -80,41 +86,131 @@ def embed(text: str) -> list[float]:
     return get_embedder().encode(text, normalize_embeddings=True).tolist()
 
 
-def _candidates(question: str, k: int, penalty: float = OLD_NEWS_PENALTY) -> list[dict]:
-    """Najbliższe fragmenty z zapasem (5·k, min. 40), posortowane według `score`.
+# Słowa pytań, które nic nie mówią wyszukiwarce pełnotekstowej (po unaccent). Konfiguracja
+# 'simple' nie ma stop-słów, a ts_rank_cd nie zna IDF — bez tej listy „jak”, „się”, „do”
+# liczyłyby się tak samo jak „USOS”.
+FTS_STOPWORDS = frozenset("""
+    a aby albo ale bo by byc czy co czym czego dla do gdy gdzie i ich ile jak jaka jaki
+    jakie jakich jakim jakiej jako jest juz kiedy kto ktora ktore ktory ktorych lub ma mam
+    mi mnie moge mozna moj moja moje na nad nie o od oraz po pod przez przy sa sie sobie
+    ta tak te tego tej ten to tu u w we z za ze
+    an and are can does how in is my of on or the what when where which who
+""".split())
+
+_COLUMNS = (
+    "id, url, title, content, page_type, published_at, body_hash, "
+    "embedding <=> %(qvec)s::vector AS dist, "
+    "page_type IN ('news', 'event') "
+    "  AND published_at < now() - make_interval(days => %(old_days)s) AS old_news"
+)
+
+
+def _to_chunk(r: tuple, penalty: float) -> dict:
+    return {"id": r[0], "url": r[1], "title": r[2], "content": r[3], "page_type": r[4],
+            "published_at": r[5], "body_hash": r[6], "dist": r[7],
+            "score": r[7] + (penalty if r[8] else 0.0)}
+
+
+def _vector_candidates(conn: psycopg.Connection, qvec: list[float], n: int,
+                       penalty: float) -> list[dict]:
+    """n najbliższych fragmentów z indeksu HNSW, posortowanych według `score`."""
+    if n > 40:  # domyślny hnsw.ef_search = 40 to też limit liczby wyników
+        conn.execute(f"SET hnsw.ef_search = {int(n)}")
+    rows = conn.execute(
+        f"SELECT {_COLUMNS} FROM chunks ORDER BY dist LIMIT %(n)s",
+        {"qvec": qvec, "old_days": OLD_NEWS_DAYS, "n": n},
+    ).fetchall()
+    return sorted((_to_chunk(r, penalty) for r in rows), key=_rank)
+
+
+def _fulltext_query(conn: psycopg.Connection, question: str) -> str | None:
+    """tsquery z pytania: jego leksemy połączone OR, bez FTS_STOPWORDS; None, gdy pusto.
+
+    Leksemy liczy Postgres tą samą konfiguracją co chunks.content_tsv ('simple' +
+    unaccent), więc zgadzają się z dokumentami. OR zamiast AND (plainto_tsquery,
+    websearch_to_tsquery): bez stemmingu „dziekanatu” w pytaniu nie pasuje do
+    „dziekanat” w treści, a AND wymagałoby każdego słowa w dokładnie tej formie.
+    Porównanie wariantów: docs/testy.md (6.4).
+    """
+    lexemes = conn.execute(
+        "SELECT unnest(tsvector_to_array(to_tsvector('simple', immutable_unaccent(%s))))",
+        (question,),
+    ).fetchall()
+    terms = [lex for (lex,) in lexemes if lex not in FTS_STOPWORDS]
+    if not terms:
+        return None
+    return " | ".join("'" + t.replace("\\", "\\\\").replace("'", "''") + "'" for t in terms)
+
+
+def _fulltext_candidates(conn: psycopg.Connection, question: str, qvec: list[float], n: int,
+                         penalty: float) -> list[dict]:
+    """n fragmentów najlepiej pasujących słowami (ts_rank_cd), w kolejności rankingu.
+
+    Odległość wektorową (`dist`) liczymy tu osobno dla każdego fragmentu — potrzebuje
+    jej próg MAX_DISTANCE, także dla fragmentów, których nie znalazło HNSW. Przy remisie
+    ts_rank_cd (częsty: fragmenty z jednym wystąpieniem słowa) wygrywa bliższy wektorowo.
+    """
+    query = _fulltext_query(conn, question)
+    if query is None:
+        return []
+    rows = conn.execute(
+        f"SELECT {_COLUMNS} FROM chunks, CAST(%(q)s AS tsquery) AS q "
+        "WHERE content_tsv @@ q ORDER BY ts_rank_cd(content_tsv, q) DESC, dist LIMIT %(n)s",
+        {"qvec": qvec, "old_days": OLD_NEWS_DAYS, "q": query, "n": n},
+    ).fetchall()
+    return [_to_chunk(r, penalty) for r in rows]
+
+
+def _rrf(*rankings: list[dict]) -> list[dict]:
+    """Reciprocal Rank Fusion: score fragmentu = −Σ 1/(RRF_K + pozycja) po listach.
+
+    RRF, a nie ważona suma wyników, bo wyniki obu wyszukiwarek mają różne skale:
+    odległość kosinusowa to 0–2 (w praktyce 0.2–0.6, mniejsza = lepsza), a ts_rank_cd
+    jest nieograniczony (zależy od liczby wystąpień słów i długości fragmentu, większy =
+    lepszy) i jego rozkład zmienia się z każdym pytaniem. Wagi sumy trzeba by stroić
+    pod te rozkłady, a i tak nie byłyby porównywalne między pytaniami. RRF patrzy tylko
+    na pozycje, więc nie wymaga normalizacji ani strojenia; RRF_K = 60 tłumi różnice
+    między czołowymi pozycjami, przez co fragment wysoko na obu listach wygrywa z
+    fragmentem pierwszym tylko na jednej (Cormack i in., 2009).
+
+    `score` jest ujemny, bo _rank() i retrieve_for_chat() sortują rosnąco.
+    """
+    fused: dict[int, dict] = {}
+    for ranking in rankings:
+        for pos, c in enumerate(ranking, 1):
+            f = fused.setdefault(c["id"], {**c, "score": 0.0})
+            f["score"] -= 1 / (RRF_K + pos)
+    return sorted(fused.values(), key=_rank)
+
+
+def _candidates(question: str, k: int, penalty: float = OLD_NEWS_PENALTY,
+                mode: str = RETRIEVAL_MODE) -> list[dict]:
+    """Kandydaci z zapasem (5·k, min. 40), posortowani według `score`.
 
     Zapas jest potrzebny, bo _select() pomija duplikaty i nadmiar fragmentów z jednej
     strony, a kara za stare aktualności zmienia kolejność.
+    W trybie hybrid z zapasem pobieramy obie listy, a `score` to wynik _rrf(); kara za
+    stare aktualności działa wtedy na kolejność listy wektorowej przed fuzją.
     """
     qvec = embed(question)
     n = max(5 * k, 40)
     with psycopg.connect(DATABASE_URL) as conn:
         register_vector(conn)
-        if n > 40:  # domyślny hnsw.ef_search = 40 to też limit liczby wyników
-            conn.execute(f"SET hnsw.ef_search = {int(n)}")
-        rows = conn.execute(
-            "SELECT id, url, title, content, page_type, published_at, body_hash, "
-            "       embedding <=> %s::vector AS dist, "
-            "       page_type IN ('news', 'event') "
-            "         AND published_at < now() - make_interval(days => %s) AS old_news "
-            "FROM chunks ORDER BY dist LIMIT %s",
-            (qvec, OLD_NEWS_DAYS, n),
-        ).fetchall()
-    chunks = [{"id": r[0], "url": r[1], "title": r[2], "content": r[3], "page_type": r[4],
-               "published_at": r[5], "body_hash": r[6], "dist": r[7],
-               "score": r[7] + (penalty if r[8] else 0.0)}
-              for r in rows]
-    return sorted(chunks, key=_rank)
+        chunks = _vector_candidates(conn, qvec, n, penalty)
+        if mode == "hybrid":
+            chunks = _rrf(chunks, _fulltext_candidates(conn, question, qvec, n, penalty))
+    return chunks
 
 
 def _rank(c: dict) -> tuple:
-    """Kolejność wyników: `score`, przy remisie krótszy URL.
+    """Kolejność wyników: `score`, przy remisie bliższy wektorowo, potem krótszy URL.
 
-    Remisy to kopie tej samej treści (ten sam embedding), np. strona portalu i jej
-    nieprzetłumaczona kopia pod /student/en/ albo /student i /student/pl. _select()
+    Remisy odległości to kopie tej samej treści (ten sam embedding), np. strona portalu
+    i jej nieprzetłumaczona kopia pod /student/en/ albo /student i /student/pl. _select()
     zostawia pierwszą kopię — krótszy adres to zwykle oryginał, lepszy do cytowania.
+    W trybie hybrid remis RRF jest częsty (ta sama pozycja na różnych listach).
     """
-    return c["score"], len(c["url"]), c["url"]
+    return c["score"], c["dist"], len(c["url"]), c["url"]
 
 
 def _select(chunks: list[dict], k: int, max_per_url: int = MAX_PER_URL) -> list[dict]:
@@ -141,8 +237,12 @@ def _select(chunks: list[dict], k: int, max_per_url: int = MAX_PER_URL) -> list[
 
 
 def retrieve(question: str, k: int = TOP_K, max_distance: float | None = MAX_DISTANCE,
-             penalty: float = OLD_NEWS_PENALTY, max_per_url: int = MAX_PER_URL) -> list[dict]:
-    """Zwraca do k najbliższych fragmentów; z `max_distance` tylko te nie dalsze niż próg.
+             penalty: float = OLD_NEWS_PENALTY, max_per_url: int = MAX_PER_URL,
+             mode: str = RETRIEVAL_MODE) -> list[dict]:
+    """Zwraca do k najlepszych fragmentów; z `max_distance` tylko te nie dalsze niż próg.
+
+    `mode` (domyślnie RETRIEVAL_MODE): "vector" — według odległości wektorowej,
+    "hybrid" — patrz retrieve_hybrid().
 
     Próg sprawdzamy w Pythonie, nie w SQL: przy indeksie HNSW warunek WHERE na
     odległość filtruje dopiero kandydatów z indeksu i może zwrócić za mało wyników.
@@ -151,10 +251,23 @@ def retrieve(question: str, k: int = TOP_K, max_distance: float | None = MAX_DIS
     penalty i według niego są sortowane. Próg nadal dotyczy samej odległości (`dist`).
     Duplikaty treści i limit fragmentów z jednej strony: _select().
     """
-    chunks = _select(_candidates(question, k, penalty), k, max_per_url)
+    chunks = _select(_candidates(question, k, penalty, mode), k, max_per_url)
     if max_distance is not None:
         chunks = [c for c in chunks if c["dist"] <= max_distance]
     return chunks
+
+
+def retrieve_hybrid(question: str, k: int = TOP_K, max_distance: float | None = MAX_DISTANCE,
+                    penalty: float = OLD_NEWS_PENALTY,
+                    max_per_url: int = MAX_PER_URL) -> list[dict]:
+    """Wyszukiwanie hybrydowe: top-N wektorowo i top-N pełnotekstowo, złączone przez RRF.
+
+    Embeddingi słabo radzą sobie ze skrótami i nazwami własnymi (USOS, IRK, ELS,
+    WNŚiT, CINiBA) — część pełnotekstowa znajduje je po dokładnym słowie. Kolejność
+    według _rrf(); każdy wynik ma `dist` (odległość wektorową) i próg `max_distance`
+    działa jak w retrieve(), także dla fragmentów znalezionych tylko pełnotekstowo.
+    """
+    return retrieve(question, k, max_distance, penalty, max_per_url, mode="hybrid")
 
 
 def build_context(chunks: list[dict]) -> str:
@@ -173,19 +286,20 @@ def build_query(history: list[dict], turns: int = 3) -> str:
     return "\n".join(user_msgs[-turns:])
 
 
-def retrieve_for_chat(history: list[dict], k: int = TOP_K, max_distance: float = MAX_DISTANCE) -> list[dict]:
+def retrieve_for_chat(history: list[dict], k: int = TOP_K, max_distance: float = MAX_DISTANCE,
+                      mode: str = RETRIEVAL_MODE) -> list[dict]:
     """Szuka zapytaniem z historii (build_query) i samym ostatnim pytaniem, łączy wyniki.
 
     Historia ratuje follow-upy ("a wnst?" samo jest daleko od wszystkiego), ale po
     zmianie tematu wcześniejsze pytania psują zapytanie — po "przepis na pierogi"
     pytanie o urlop dziekański z historią byłoby odrzucone, choć samo pasuje dobrze.
-    Każdy fragment dostaje mniejszą z dwóch odległości; duplikaty, limit na stronę
-    (_select) i próg stosujemy po złączeniu.
+    Każdy fragment dostaje lepszy z dwóch wyników (`score`: odległość albo −RRF);
+    duplikaty, limit na stronę (_select) i próg stosujemy po złączeniu.
     """
     last = next(m["content"] for m in reversed(history) if m["role"] == "user")
     best: dict[int, dict] = {}
     for query in dict.fromkeys([build_query(history), last]):
-        for c in _candidates(query, k):
+        for c in _candidates(query, k, mode=mode):
             if c["id"] not in best or c["score"] < best[c["id"]]["score"]:
                 best[c["id"]] = c
     chunks = _select(sorted(best.values(), key=_rank), k)

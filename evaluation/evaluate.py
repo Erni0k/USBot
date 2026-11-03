@@ -17,6 +17,7 @@ Uruchom:            python evaluation/evaluate.py
 Inne k / szczegóły: python evaluation/evaluate.py --k 1 3 5 10 20 --verbose
 Zapis wyników:      python evaluation/evaluate.py --out wyniki.json
 Dobór MAX_DISTANCE: python evaluation/evaluate.py --threshold-sweep
+Tryb wyszukiwania:  python evaluation/evaluate.py --mode hybrid   (domyślnie RETRIEVAL_MODE)
 """
 import argparse
 import json
@@ -28,7 +29,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from cli import DATABASE_URL, MAX_DISTANCE, TOP_K, retrieve  # noqa: E402
+from cli import DATABASE_URL, MAX_DISTANCE, RETRIEVAL_MODE, TOP_K, retrieve  # noqa: E402
 
 QUERIES = Path(__file__).with_name("queries.jsonl")
 
@@ -123,6 +124,8 @@ def main() -> None:
     ap.add_argument("--out", type=Path, help="zapisz wyniki per pytanie do pliku JSON")
     ap.add_argument("--threshold-sweep", action="store_true",
                     help=f"pokaż skutki progu MAX_DISTANCE 0.30–0.60 (straty liczone w top-TOP_K = {TOP_K})")
+    ap.add_argument("--mode", choices=["vector", "hybrid"], default=RETRIEVAL_MODE,
+                    help=f"tryb wyszukiwania (domyślnie RETRIEVAL_MODE = {RETRIEVAL_MODE})")
     args = ap.parse_args()
 
     queries = load_queries(args.file)
@@ -133,7 +136,7 @@ def main() -> None:
 
     per_query = []
     for q in queries:
-        chunks = retrieve(q["question"], k=fetch_k, max_distance=None)
+        chunks = retrieve(q["question"], k=fetch_k, max_distance=None, mode=args.mode)
         ranked = [norm_url(c["url"]) for c in chunks]
         row = {
             "id": q["id"],
@@ -157,7 +160,8 @@ def main() -> None:
     by_id = {q["id"]: q for q in queries}
     reachable = [r for r in answerable if indexed & by_id[r["id"]]["relevant"].keys()]
 
-    print(f"\nPytania: {len(answerable)} w zakresie, {len(out_of_scope)} spoza zakresu\n")
+    print(f"\nTryb: {args.mode}. Pytania: {len(answerable)} w zakresie, "
+          f"{len(out_of_scope)} spoza zakresu\n")
     print(f"{'k':>4} {'Hit@k':>8} {'Recall@k':>9} {'Prec@k':>8} {'nDCG@k':>8}   {'Hit@k (odp. w bazie)':>20}"
           f" {'różnych stron':>14}")
     for k in ks:

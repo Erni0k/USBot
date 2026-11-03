@@ -80,6 +80,19 @@ def _ensure_schema(conn: psycopg.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS chunks_content_hash_idx ON chunks (content_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS chunks_body_hash_idx ON chunks (body_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS pages_chunk_hashes_idx ON pages USING gin (chunk_hashes)")
+    # Wyszukiwanie pelnotekstowe - opis w init.sql. Dodanie kolumny GENERATED przepisuje
+    # cala tabele (z indeksem HNSW), wiec pierwsza migracja trwa dluzej.
+    conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
+    conn.execute("""
+        CREATE OR REPLACE FUNCTION immutable_unaccent(text) RETURNS text
+            LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT
+            AS $$ SELECT public.unaccent('public.unaccent'::regdictionary, $1) $$
+    """)
+    conn.execute("""
+        ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_tsv tsvector GENERATED ALWAYS AS
+            (to_tsvector('simple'::regconfig, immutable_unaccent(content))) STORED
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS chunks_content_tsv_idx ON chunks USING gin (content_tsv)")
     _backfill_hashes(conn)
     conn.commit()
 
