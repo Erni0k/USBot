@@ -13,7 +13,8 @@ Użytkownik (terminal)
        ├─ retrieval: pgvector (embeddingi bge-m3, zapytanie z kontekstem rozmowy)
        │    opcjonalnie + pełnotekstowe Postgres FTS, łączone przez RRF (RETRIEVAL_MODE=hybrid)
        ├─ wybór TOP_K: bez powtórzonej treści, maks. 2 fragmenty z jednej strony
-       ├─ próg odległości: nic dość bliskiego → stała odpowiedź, bez LLM-a
+       │    opcjonalnie reranking top-20 cross-encoderem bge-reranker-v2-m3 (RERANK=true)
+       ├─ próg odległości (z RERANK — wyniku rerankera): nic pasującego → stała odpowiedź, bez LLM-a
        └─ generacja: Ollama / vLLM (Qwen3, API OpenAI-compatible)
 ```
 
@@ -215,6 +216,7 @@ python evaluation/evaluate.py --k 1 3 5 10 20 --verbose   # + URL-e dla pudłowa
 python evaluation/evaluate.py --out wyniki.json           # wyniki per pytanie
 python evaluation/evaluate.py --threshold-sweep           # skutki progu MAX_DISTANCE 0.30–0.60
 python evaluation/evaluate.py --mode hybrid               # tryb wyszukiwania (domyślnie RETRIEVAL_MODE)
+python evaluation/evaluate.py --rerank --threshold-sweep  # reranking + próg na odległości i na wyniku rerankera
 ```
 
 Format jednej linii `queries.jsonl`:
@@ -236,7 +238,8 @@ Format jednej linii `queries.jsonl`:
   zakresu i w zakresie zostałoby odrzuconych oraz ile trafień by przepadło (w top-`TOP_K`,
   czyli tyle fragmentów, ile dostaje LLM). Uruchom po każdej zmianie bazy lub modelu
   embeddingów i w razie potrzeby popraw `MAX_DISTANCE` — uzasadnienie obecnej wartości
-  jest w `docs/testy.md` (6.4).
+  jest w `docs/testy.md` (6.4). Z `--rerank` sweep pokazuje też próg na wyniku rerankera
+  (`MIN_RERANK_SCORE`) oraz Hit@1 i Hit@`TOP_K` po progu, czyli to, co dostaje LLM.
 - Odpalaj przed i po każdej zmianie chunkingu, modelu embeddingów czy sposobu
   wyszukiwania. Po re-crawlu sprawdź, czy oznaczone URL-e nadal są w bazie.
 
@@ -254,6 +257,9 @@ Format jednej linii `queries.jsonl`:
 | `OLD_NEWS_DAYS` | od ilu dni aktualność/wydarzenie jest „stare" | `730` |
 | `MAX_PER_URL` | najwyżej tyle fragmentów z jednej strony w wynikach `retrieve()`; `0` = bez limitu | `2` |
 | `RETRIEVAL_MODE` | `vector` — samo wyszukiwanie wektorowe; `hybrid` — wektorowe + pełnotekstowe (`chunks.content_tsv`) połączone przez RRF; porównanie w `docs/testy.md` (6.4) | `vector` |
+| `RERANK` | `true` = 20 najlepszych fragmentów ocenia cross-encoder i zostaje `TOP_K`; wymaga GPU (na CPU ~6 s na pytanie) | `false` |
+| `RERANK_MODEL` | model rerankera (cross-encoder) | `BAAI/bge-reranker-v2-m3` |
+| `MIN_RERANK_SCORE` | przy `RERANK=true` próg zamiast `MAX_DISTANCE`: min. wynik rerankera (0–1) fragmentu | `0.01` |
 | `BOILERPLATE_URLS` | fragment o tej samej treści na więcej stronach to boilerplate i nie trafia do bazy; `0` = wyłączone | `20` |
 | `ENABLE_THINKING` | tryb rozumowania Qwen3 (wolniejszy) | `false` |
 | `CRAWL_LIMIT` | maks. liczba stron na jeden crawl | `6000` |
@@ -285,6 +291,14 @@ Format jednej linii `queries.jsonl`:
   progu bez zmian), a obniża Hit@1 — stąd domyślny `vector` (`docs/testy.md`, 6.4).
   Kolumnę `content_tsv` dodaje migracja w ingestii (za pierwszym razem ok. minuty —
   przepisuje tabelę); bez niej tryb `hybrid` nie zadziała.
+- **Reranking** (`RERANK=true`): z kandydatów (po deduplikacji i limicie na stronę) 20
+  ocenia cross-encoder `BAAI/bge-reranker-v2-m3` i do LLM-a trafia `TOP_K` najlepszych.
+  Próg działa wtedy na wyniku rerankera (`MIN_RERANK_SCORE` = 0.01), nie na odległości.
+  Na zbiorze testowym trafienie w kontekście LLM-a (top-8 po progu) ma 50/56 pytań zamiast
+  45/56, żadne pytanie w zakresie nie jest odrzucane, a pytań spoza zakresu odrzuconych
+  jest 10/18 zamiast 8/18 (`docs/testy.md`, 6.4). Reranking 20 par trwa ~90 ms na GPU
+  (fp16), ale ~6 s na CPU — dlatego jest domyślnie wyłączony. Model (~2.3 GB) pobierz raz
+  z `HF_HUB_OFFLINE=0`. Zalecane połączenie: `RERANK=true` z `RETRIEVAL_MODE=vector`.
 - Gdy żaden fragment nie jest bliżej niż `MAX_DISTANCE`, bot od razu odpowiada
   „Nie mam tej informacji – sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
   i nie woła modelu — zamiast dawać mu niepasujący kontekst, na którym zmyśla. Próg

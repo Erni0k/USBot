@@ -83,6 +83,13 @@ liczba kandydatów. Obie listy łączy Reciprocal Rank Fusion (`score = Σ 1/(60
 Każdy wynik ma `dist` liczony z embeddingu, więc próg `MAX_DISTANCE` działa tak samo.
 Domyślnie tryb jest wyłączony — uzasadnienie w [Testy](testy.md) (6.4).
 
+Przy `RERANK=true` z kandydatów `_select()` wybiera 20 (`RERANK_CANDIDATES`), cross-encoder
+`BAAI/bge-reranker-v2-m3` ocenia pary (pytanie, fragment) i zostaje `TOP_K` z najwyższym
+wynikiem (`rerank()`; w `retrieve_for_chat()` lepszy z wyników dla obu zapytań). Próg
+działa wtedy na wyniku rerankera (`MIN_RERANK_SCORE`, 0–1), a `MAX_DISTANCE` jest
+pomijany. Model ładowany raz (`get_reranker()`), na GPU w fp16. Wyniki i czasy:
+[Testy](testy.md) (6.4).
+
 !!! tip "Retrieval z kontekstem rozmowy"
     Zapytanie nie jest budowane z samego ostatniego komunikatu — funkcja
     `build_query()` skleja kilka ostatnich pytań użytkownika. Dzięki temu krótkie
@@ -128,6 +135,9 @@ wcześniejsze kopie są usuwane w tej samej transakcji (opis reguły w README).
 | `OLD_NEWS_DAYS` | `730` | Od ilu dni aktualność/wydarzenie jest „stare" |
 | `MAX_PER_URL` | `2` | Najwyżej tyle fragmentów z jednej strony w wynikach; `0` = bez limitu |
 | `RETRIEVAL_MODE` | `vector` | `vector` albo `hybrid` (wektorowe + pełnotekstowe, RRF) |
+| `RERANK` | `false` | `true` = reranking 20 kandydatów cross-encoderem, zostaje `TOP_K`; wymaga GPU |
+| `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | Model rerankera (cross-encoder, Hugging Face) |
+| `MIN_RERANK_SCORE` | `0.01` | Przy `RERANK=true` próg zamiast `MAX_DISTANCE`: min. wynik rerankera fragmentu |
 | `BOILERPLATE_URLS` | `20` | Treść fragmentu na większej liczbie stron to boilerplate i nie trafia do bazy; `0` = wyłączone |
 | `ENABLE_THINKING` | `false` | Tryb rozumowania Qwen3 (wolniejszy, dokładniejszy) |
 | `CRAWL_LIMIT` | `6000` | Maks. liczba stron na jeden crawl |

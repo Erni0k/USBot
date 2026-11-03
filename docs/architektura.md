@@ -35,7 +35,9 @@ jest embeddowane lokalnie → zapytanie wektorowe do PostgreSQL zwraca kandydat�
 `hybrid` także zapytanie pełnotekstowe; obie listy łączy RRF, a każdy kandydat ma
 odległość wektorową) →
 `_select()` wybiera `TOP_K`: ta sama treść tylko raz, najwyżej `MAX_PER_URL` fragmentów
-z jednej strony → fragmenty dalsze niż `MAX_DISTANCE` są odrzucane → kontekst
+z jednej strony (z `RERANK=true`: 20 kandydatów ocenia cross-encoder i zostaje `TOP_K`
+najlepszych) → fragmenty dalsze niż `MAX_DISTANCE` (z rerankingiem: z wynikiem poniżej
+`MIN_RERANK_SCORE`) są odrzucane → kontekst
 wbudowywany jest w system prompt → model LLM generuje odpowiedź strumieniowo.
 
 ## 2.2 Crawler — przepływ ingestii

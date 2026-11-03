@@ -24,7 +24,8 @@ Użytkownik (terminal)
        ├─ retrieval: pgvector (embeddingi bge-m3, zapytanie z kontekstem rozmowy)
        │    opcjonalnie + pełnotekstowe Postgres FTS, łączone przez RRF (RETRIEVAL_MODE=hybrid)
        ├─ wybór TOP_K: bez powtórzonej treści, maks. 2 fragmenty z jednej strony
-       ├─ próg odległości: nic dość bliskiego → stała odpowiedź, bez LLM-a
+       │    opcjonalnie reranking top-20 cross-encoderem bge-reranker-v2-m3 (RERANK=true)
+       ├─ próg odległości (z RERANK — wyniku rerankera): nic pasującego → stała odpowiedź, bez LLM-a
        └─ generacja: Ollama / vLLM (Qwen3, API OpenAI-compatible, streaming)
 ```
 
@@ -32,7 +33,8 @@ Użytkownik (terminal)
 2. Zapytanie wektorowe do **PostgreSQL + pgvector** zwraca `TOP_K` najbliższych fragmentów —
    ta sama treść tylko raz, najwyżej `MAX_PER_URL` (2) fragmenty z jednej strony.
    Z `RETRIEVAL_MODE=hybrid` dochodzi wyszukiwanie pełnotekstowe (Postgres FTS), a obie
-   listy łączy Reciprocal Rank Fusion.
+   listy łączy Reciprocal Rank Fusion. Z `RERANK=true` 20 kandydatów ocenia cross-encoder
+   (`bge-reranker-v2-m3`) i zostaje `TOP_K` najlepszych.
 3. Fragmenty trafiają do **system promptu** jako kontekst.
 4. **Model LLM** (Qwen3 przez Ollama/vLLM) generuje odpowiedź strumieniowo.
 
@@ -43,6 +45,7 @@ Wiedza w bazie utrzymywana jest osobnym, **inkrementalnym crawlerem**
 
 - 🔍 **RAG** na bazie wektorowej pgvector (embeddingi `BAAI/bge-m3`, 1024 wymiary),
   opcjonalnie **hybrydowy** z wyszukiwaniem pełnotekstowym (`RETRIEVAL_MODE=hybrid`)
+  i **rerankingiem** cross-encoderem (`RERANK=true`)
 - 🧠 **Lokalny LLM** Qwen3 (domyślnie `qwen3:8b`) — bez wysyłania danych na zewnątrz
 - 💬 **Rozmowa wieloturowa** z retrievalem uwzględniającym kontekst poprzednich pytań
 - 🕸️ **Inkrementalny crawler** BFS z równoległym pobieraniem (limit żądań na domenę) i pomijaniem niezmienionych stron

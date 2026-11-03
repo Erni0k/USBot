@@ -28,6 +28,8 @@
 | T15 | Integracyjny | `ingest._flush()` | Fragment, którego treść ma już ponad `BOILERPLATE_URLS` stron | Nie zapisany; wcześniejsze kopie usunięte z `chunks`, hash zostaje w `pages.chunk_hashes` |
 | T16 | Jednostkowy | `_rrf()` | Dwie listy: fragment na 3. miejscu obu i fragment 1. tylko na jednej | Pierwszy wygrywa (2/63 > 1/61); każdy fragment raz, `score` = −Σ 1/(60 + pozycja) |
 | T17 | Integracyjny | `retrieve_hybrid()` | Pytanie ze słowem obecnym tylko w fragmentach dalekich wektorowo; `RETRIEVAL_MODE=foo` | Fragmenty z części pełnotekstowej mają `dist` (próg działa); nieznany tryb → `ValueError` przy imporcie |
+| T18 | Jednostkowy | `rerank()` | Dwa zapytania, 3 fragmenty, cross-encoder zamockowany | Malejąco według `rerank`; każdy fragment ma lepszy z dwóch wyników |
+| T19 | Integracyjny | `retrieve()` z `use_rerank=True` | Pytanie z trafnym fragmentem dalszym niż `MAX_DISTANCE` | Do `TOP_K` wyników z 20 kandydatów; próg na `rerank` (`MIN_RERANK_SCORE`), odległość nie odcina |
 
 ## 6.3 Instrukcja uruchomienia testów
 
@@ -558,6 +560,151 @@ pełnotekstowy będzie ważył rzadkie słowa (IDF/BM25 — np. rozszerzenie `pg
 tabela częstości leksemów), (2) próg będzie uwzględniał dopasowanie słowne (np. fragment
 z rzadkim słowem pytania może być dalej niż `MAX_DISTANCE`), (3) etykiety zostaną
 przejrzane z kandydatami z obu trybów, (4) zbiór pytań ze skrótami będzie większy niż 8.
+
+**Reranking cross-encoderem** (2026-11-03; baza jak wyżej, 56 pytań w zakresie i 18 spoza,
+k = `TOP_K` = 8, `MAX_PER_URL` = 2).
+
+Zmiany:
+
+- **`rerank()`** (`RERANK=true`, domyślnie wyłączone): z kandydatów trybu `RETRIEVAL_MODE`
+  `_select()` wybiera 20 (`RERANK_CANDIDATES`; duplikaty i limit na stronę jak dotąd),
+  model `BAAI/bge-reranker-v2-m3` (`sentence_transformers.CrossEncoder`, `max_length` 512 —
+  najdłuższy fragment ma 397 tokenów) ocenia pary (pytanie, fragment), zostaje `TOP_K` z
+  najwyższym wynikiem. Wynik to sigmoid logitu, 0–1. Model ładowany raz (`get_reranker()`),
+  na GPU w fp16.
+- **`retrieve_for_chat()`**: reranker ocenia złączone fragmenty oboma zapytaniami (z historią
+  i samym ostatnim pytaniem) i bierze lepszy wynik — tak jak przy odległości.
+- **Próg na wyniku rerankera** (`MIN_RERANK_SCORE`) zamiast `MAX_DISTANCE`, gdy reranking
+  jest włączony (`_cutoff()`).
+- `evaluate.py --rerank`; `--threshold-sweep` pokazuje wtedy próg na obu skalach i dla
+  każdego progu Hit@1 i Hit@8 *po progu* (to, co dostaje LLM). Odrzucenie pytania liczone
+  jest teraz na top-`TOP_K`, nie na top-`max(k)` — dla dotychczasowych wyników nic to nie
+  zmienia (wiersze 0.43 jak w tabeli wyżej).
+
+*Porównanie* (`python evaluation/evaluate.py --mode vector|hybrid --rerank|--no-rerank
+--k 1 3 5 8 10 --threshold-sweep`; etykiet nie zmieniano). „Po progu”: bez rerankingu
+`MAX_DISTANCE` = 0.43, z rerankingiem `MIN_RERANK_SCORE` = 0.01:
+
+| Tryb | Hit@1 | Hit@3 | Hit@5 | Hit@8 | Hit@10 | nDCG@8 | Recall@10 | MRR@10 | Różnych stron w top-8 | Hit@1 po progu | Hit@8 po progu | Spoza zakresu odrzucone | W zakresie odrzucone |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| vector | **0.571** | **0.786** | 0.839 | 0.875 | 0.911 | 0.562 | 0.659 | **0.682** | 6.21 | **0.554** | 0.804 | 8/18 | 2/56 |
+| hybrid | 0.500 | **0.786** | 0.857 | **0.911** | 0.911 | 0.535 | 0.679 | 0.641 | 6.64 | 0.446 | 0.804 | 8/18 | 2/56 |
+| vector + rerank | 0.536 | 0.768 | 0.839 | 0.893 | **0.929** | 0.567 | 0.681 | 0.663 | 6.30 | 0.536 | **0.893** | **10/18** | **0/56** |
+| hybrid + rerank | 0.518 | 0.768 | **0.875** | **0.911** | **0.929** | **0.573** | **0.699** | 0.658 | 6.48 | 0.518 | **0.893** | 8/18 | **0/56** |
+
+Jedno pytanie to 0.018. Wyniki z rerankerem w fp16; w fp32 są identyczne poza nDCG@5,
+Recall@5 i nDCG@10 hybrid + rerank (różnice ≤ 0.006 — zmiana kolejności przy remisie).
+
+- **Bez progu reranker poprawia dół listy, nie górę.** Hit@8–10, nDCG@8 i Recall@10 rosną,
+  Hit@1 i MRR spadają. Pozycja pierwszego trafienia: vector → vector + rerank lepiej w 11
+  pytaniach, gorzej w 12, bez zmian w 33; hybrid → hybrid + rerank 18 / 11 / 27.
+- **Dlaczego Hit@1 spada.** Top-1 rerankera w 12 pytaniach, które się pogorszyły
+  (vector → vector + rerank), przejrzano ręcznie:
+    - 4 to nieoznaczone strony, które odpowiadają na pytanie: `haslo-konto` →
+      `usnet…/zmiana-hasla`, `pomoc-psychologiczna` → „Gdzie szukać wsparcia > Pomoc
+      psychologiczna”, `szkolenia-obowiazkowe` → angielska wersja strony o szkoleniu BHP dla
+      I roku, `vpn` → instrukcja VPN dla Windows 7;
+    - 3 to stare aktualności, które pasują treścią, ale nie datą: `rekrutacja-terminy` →
+      rekrutacja 2016/2017, `akademik` → wnioski do 31 sierpnia 2016, `kariera` → platforma
+      ofert z 2016 r. Reranker nie widzi daty, a `OLD_NEWS_PENALTY` działa tylko na kolejność
+      przed rerankingiem;
+    - 3 częściowo (`poczta-studencka` → odzyskiwanie hasła do poczty, `regulamin` → strona
+      „Tok studiów” z opisem regulaminu, `samorzad` → wybory do samorządu z kontaktem przez
+      social media);
+    - 2 chybione: `rektorat-adres` → definicja rektora w słowniku haseł, `egzamin-komisyjny`
+      → termin wniesienia podania.
+
+    Etykiet nie zmieniano; strony z pierwszej grupy warto rozważyć przy kolejnym przeglądzie
+    etykiet (razem z kandydatami z trybu hybrid, patrz wyżej).
+- **Zyski rerankera** (vector → vector + rerank), głównie tam, gdzie trafna strona jest
+  daleko wektorowo albo przegrywała z podobnymi: `rzecznik-praw-studenta` brak → 2, `niepelnosprawnosc` brak → 9, `erasmus` 10 → 5,
+  `alarm` 5 → 1, `thunderbird` 3 → 1, `skrot-wnsit` i `skrot-bankowa12` 2 → 1.
+
+*Próg: odległość czy wynik rerankera* (fragment `--threshold-sweep`, vector + rerank):
+
+| Skala | Próg | Spoza zakresu odrzucone | W zakresie odrzucone | W tym strata | Trafienia utracone łącznie | Hit@1 po progu | Hit@8 po progu |
+|---|---|---|---|---|---|---|---|
+| odległość | 0.40 | 13/18 | 4/56 | 4 | 5 | 0.464 | 0.804 |
+| odległość | 0.43 | 8/18 | 2/56 | 2 | 4 | 0.482 | 0.821 |
+| odległość | 0.46 | 6/18 | 0/56 | 0 | 0 | 0.536 | 0.893 |
+| wynik rerankera | 0.002 | 5/18 | 0/56 | 0 | 0 | 0.536 | 0.893 |
+| wynik rerankera | 0.005 | 8/18 | 0/56 | 0 | 0 | 0.536 | 0.893 |
+| **wynik rerankera** | **0.01** | **10/18** | **0/56** | **0** | **0** | **0.536** | **0.893** |
+| wynik rerankera | 0.02 | 10/18 | 0/56 | 0 | 0 | 0.536 | 0.893 |
+| wynik rerankera | 0.03 | 10/18 | 1/56 | 1 | 1 | 0.518 | 0.875 |
+| wynik rerankera | 0.05 | 12/18 | 1/56 | 1 | 1 | 0.518 | 0.875 |
+| wynik rerankera | 0.2 | 13/18 | 4/56 | 4 | 5 | 0.482 | 0.804 |
+| wynik rerankera | 0.7 | 16/18 | 9/56 | 9 | 14 | 0.411 | 0.643 |
+
+Hybrid + rerank, wynik rerankera: 0.005 — 5/18 i 0 strat; 0.01 — 8/18, 0/56 odrzuconych,
+1 trafienie utracone łącznie (`skrot-wnsit`: trafne fragmenty — dziekanat WNST i lista
+dziekanatów — mają 0.006 i 0.005; reranker nie łączy skrótu „WNŚiT” z „WNST” ani z pełną
+nazwą wydziału, a w trybie vector + rerank trafienie daje strona „zdalny kontakt z
+dziekanatami”, 0.175); 0.02 — 9/18, jak 0.01.
+
+Najwyższy wynik rerankera: w zakresie 0.024–1.000 (mediana 0.982), spoza zakresu
+0.0002–0.878 (mediana 0.007). Odległość top-1 tych samych list: w zakresie 0.180–0.451,
+spoza 0.356–0.561 — rozkłady nakładają się dużo bardziej.
+
+**Wybrano próg na wyniku rerankera, `MIN_RERANK_SCORE` = 0.01:**
+
+- **Na tej samej liście (vector + rerank) wynik rerankera wygrywa z odległością.** Przy
+  0.01 odrzucone 10/18 pytań spoza zakresu i 0/56 w zakresie, bez utraty trafień; próg
+  odległości 0.43 odrzuca 8/18 spoza i 2/56 w zakresie (`skrot-wnsit` 0.451, `skrot-rpsid`
+  0.441), a odległość bez strat (0.46) odrzuca już tylko 6/18. Hit@8 po progu: 0.893 vs
+  0.821 przy 0.43.
+- **Względem obecnego ustawienia** (vector, `MAX_DISTANCE` = 0.43): Hit@8 po progu 0.804 →
+  0.893 (45 → 50 z 56 pytań), Hit@1 po progu 0.554 → 0.536 (31 → 30), spoza zakresu
+  odrzucone 8 → 10 z 18, w zakresie 2 → 0. Pytania ze skrótami po progu: Hit@8 5/8 → 8/8
+  (problem opisany wyżej — skróty traciły przez próg odległości — znika). Na starych 48
+  pytaniach: Hit@8 po progu 40 → 42, Hit@1 26 → 22.
+- **Dlaczego 0.01.** Najniżej ocenione pytanie w zakresie to `alarm` (0.024: „Co zrobić,
+  gdy… alarm przeciwlotniczy?” — trafny fragment „atak powietrzny”); próg 0.03 już je
+  odrzuca. 0.01 i 0.02 dają to samo na zbiorze, ale 0.01 zostawia margines ok. 0.9 w logicie
+  (0.02 → 0.024 to tylko 0.2), a w hybrid + rerank `alarm` ma 0.020. Poniżej 0.01 progu
+  przybywa pytań spoza zakresu, które przechodzą (0.005: 8/18), bez zysku w zakresie.
+- **Co odrzuca:** pogoda, mecz GKS, SUM (medycyna), PIT, SQL, small talk, przepis, prompt
+  injection, Python, wybory (wszystkie < 0.008). Względem progu 0.43 dochodzą SUM, GKS i
+  pogoda, a odpada płaca minimalna (0.056).
+- **Czego nie odrzuci żaden rozsądny próg:** pytania o inne uczelnie, dla których UŚ ma
+  stronę o tym samym (AWF — akademik 0.878, UEK — rejestracja 0.823, Politechnika —
+  dziekanat 0.657, biblioteka UWr 0.635) i matura (0.523). Reranker ocenia, czy fragment
+  odpowiada na pytanie *o tym temacie*, nie czy dotyczy *tej uczelni*. Dla nich nadal
+  zostaje instrukcja w prompcie systemowym.
+- Follow-upy z rozmów testowych (`retrieve_for_chat()`) przechodzą próg: „a wnst?”
+  (najwyższy wynik 0.990), „nie działa mi, co robić?” po eduroam (0.880), urlop po
+  pierogach i wyborach (0.992), USOSweb po pogodzie (0.995), „a socjalne?” (0.977).
+  Ograniczenie z T12 bez zmian: przy „a wnst?” góra listy to nadal dziekanat WH, a
+  „przepis na pierogi” po pytaniu o stypendium przechodzi dzięki historii (0.359).
+
+**Czas reranku 20 par** (pytanie, fragment) — top-20 dla każdego z 74 pytań zbioru, po 3
+przebiegach rozgrzewki; RTX 3080, CPU 12 wątków PyTorch:
+
+| Urządzenie | Mediana | p90 | Min | Ładowanie modelu |
+|---|---|---|---|---|
+| GPU fp32 | 274 ms | 342 ms | 189 ms | 6.2 s |
+| **GPU fp16** (w kodzie) | **88 ms** | **109 ms** | **66 ms** | 5.5 s |
+| CPU fp32 | 5 929 ms | 7 474 ms | 4 374 ms | 4.0 s |
+
+`retrieve_for_chat()` ocenia do 40 par (dwa zapytania); całe wywołanie z embeddingiem,
+bazą i rerankingiem na GPU trwa 270–370 ms. Na CPU reranking to ok. 6–12 s na pytanie —
+dłużej niż odpowiedź LLM-a.
+
+**Wniosek: reranking opcjonalny (`RERANK=false` domyślnie), zalecany na GPU z
+`RETRIEVAL_MODE=vector`.**
+
+- Na tym, co dostaje LLM, reranking z progiem na swoim wyniku daje najwięcej: +5 pytań z
+  trafieniem w top-8 po progu, 0 odrzuconych pytań w zakresie, 2 pytania spoza zakresu
+  więcej odrzucone. Koszt: −1 pytanie w Hit@1 po progu i starsze aktualności wyżej.
+- vector + rerank zamiast hybrid + rerank: po progu ten sam Hit@8 (0.893), lepszy Hit@1
+  (0.536 vs 0.518), więcej odrzuconych pytań spoza zakresu (10 vs 8), bez straty fragmentu
+  `skrot-wnsit` i bez ~75 ms zapytania pełnotekstowego.
+- Domyślnie wyłączony, bo wymaga GPU (na CPU ~6 s na pytanie) i pobrania ~2.3 GB modelu.
+  Przy `RERANK=true` próg `MAX_DISTANCE` nie działa — odcinałby fragmenty, które reranker
+  przywraca.
+- Do zrobienia: kara za stare aktualności także po rerankingu (3 z 12 pogorszeń), przegląd
+  etykiet z kandydatami rerankera, ponowna kalibracja `MIN_RERANK_SCORE` po zmianie modelu
+  rerankera lub `RERANK_CANDIDATES`.
 
 !!! warning "Status"
     Katalog `tests/` jest **planowany** — testy zostaną zaimplementowane w kolejnych

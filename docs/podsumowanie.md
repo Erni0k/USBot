@@ -72,10 +72,16 @@
   + pełnotekstowe (`chunks.content_tsv`, `'simple'` + `unaccent`, GIN) łączone przez
   Reciprocal Rank Fusion. Na zbiorze testowym nie poprawia kontekstu LLM-a (Hit@8 po
   progu bez zmian), obniża Hit@1 — domyślny zostaje tryb wektorowy.
+- **Reranking** (`RERANK=true`, domyślnie wyłączony — wymaga GPU) — 20 kandydatów ocenia
+  cross-encoder `bge-reranker-v2-m3`, próg działa na jego wyniku (`MIN_RERANK_SCORE` =
+  0.01). Trafienie w top-8 po progu: 50/56 pytań zamiast 45/56, 0/56 pytań w zakresie
+  odrzuconych (było 2), 10/18 spoza zakresu odrzuconych (było 8). Hit@1 bez progu
+  spada (0.571 → 0.536) — część nowych top-1 to nieoznaczone trafne strony, część stare
+  aktualności.
 - **Cache embeddingów i boilerplate** — `content_hash` w `chunks`: treść, która już jest
   w bazie, nie jest embedowana ponownie; treść na ponad 20 stronach (`BOILERPLATE_URLS`)
   nie trafia do bazy.
-- **Ewaluacja retrievalu** (`evaluation/evaluate.py`, `--mode vector|hybrid`): 56 pytań z
+- **Ewaluacja retrievalu** (`evaluation/evaluate.py`, `--mode vector|hybrid`, `--rerank`): 56 pytań z
   oznaczonymi stronami (w tym 8 ze skrótami i nazwami własnymi) + 18 spoza zakresu; Hit/Recall/Precision/nDCG@k, MRR, raport pokrycia
   bazy, dobór progu. Wynik bazowy 1a: Hit@10 0,917, MRR 0,630; po chunkingu z
   prefiksem: Hit@1 0,542, MRR 0,643; po deduplikacji i limicie na stronę: Hit@10 0,896,
@@ -111,6 +117,10 @@
   sprawdzenia: ranking pełnotekstowy ważący rzadkie słowa (BM25/IDF), próg uwzględniający
   dopasowanie słowne (pytania ze skrótami tracą dziś przez `MAX_DISTANCE`, nie przez
   ranking), przegląd etykiet z kandydatami z obu trybów i większy zbiór pytań ze skrótami.
+  Próg odległości przestaje być problemem przy rerankingu (skróty: 8/8 z trafieniem po progu).
+- **Reranking z datą** — reranker nie widzi daty publikacji, więc stare aktualności
+  (rekrutacja 2016/2017) wygrywają z aktualnymi stronami; kara `OLD_NEWS_PENALTY` działa
+  dziś tylko przed rerankingiem.
 - **Wielomodalność** — upload plików PDF (np. regulaminów) i pytania na ich podstawie.
 - **Panel administracyjny** — zarządzanie ingestią, przegląd fragmentów, monitoring jakości.
 - **Ewaluacja automatyczna** — metryki jakości RAG (RAGAS, TruLens) do mierzenia
