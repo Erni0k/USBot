@@ -76,6 +76,13 @@ dostają przy sortowaniu `dist + OLD_NEWS_PENALTY` i z kandydatów zostaje `TOP_
 najlepszych. Próg nadal dotyczy samej odległości. Domyślnie kara jest wyłączona —
 uzasadnienie w [Testy](testy.md) (6.4).
 
+Przy `RETRIEVAL_MODE=hybrid` (`retrieve_hybrid()`) obok tego zapytania wykonywane jest
+wyszukiwanie pełnotekstowe po kolumnie `chunks.content_tsv` (`'simple'` + `unaccent`,
+indeks GIN): słowa pytania bez stop-słów połączone OR, ranking `ts_rank_cd`, ta sama
+liczba kandydatów. Obie listy łączy Reciprocal Rank Fusion (`score = Σ 1/(60 + pozycja)`).
+Każdy wynik ma `dist` liczony z embeddingu, więc próg `MAX_DISTANCE` działa tak samo.
+Domyślnie tryb jest wyłączony — uzasadnienie w [Testy](testy.md) (6.4).
+
 !!! tip "Retrieval z kontekstem rozmowy"
     Zapytanie nie jest budowane z samego ostatniego komunikatu — funkcja
     `build_query()` skleja kilka ostatnich pytań użytkownika. Dzięki temu krótkie
@@ -120,6 +127,7 @@ wcześniejsze kopie są usuwane w tej samej transakcji (opis reguły w README).
 | `OLD_NEWS_PENALTY` | `0` | Kara do odległości (tylko przy sortowaniu) dla `news`/`event` starszych niż `OLD_NEWS_DAYS`; `0` = wyłączone |
 | `OLD_NEWS_DAYS` | `730` | Od ilu dni aktualność/wydarzenie jest „stare" |
 | `MAX_PER_URL` | `2` | Najwyżej tyle fragmentów z jednej strony w wynikach; `0` = bez limitu |
+| `RETRIEVAL_MODE` | `vector` | `vector` albo `hybrid` (wektorowe + pełnotekstowe, RRF) |
 | `BOILERPLATE_URLS` | `20` | Treść fragmentu na większej liczbie stron to boilerplate i nie trafia do bazy; `0` = wyłączone |
 | `ENABLE_THINKING` | `false` | Tryb rozumowania Qwen3 (wolniejszy, dokładniejszy) |
 | `CRAWL_LIMIT` | `6000` | Maks. liczba stron na jeden crawl |

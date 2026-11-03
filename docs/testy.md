@@ -26,6 +26,8 @@
 | T13 | Jednostkowy | `_select()` | Kandydaci z powtórzonym `body_hash` i 4 fragmentami jednej strony | Każda treść raz (najbliższa, przy remisie krótszy URL), ≤ `MAX_PER_URL` na stronę, nadal `k` wyników |
 | T14 | Integracyjny | `ingest._flush()` | Strona z niezmienionymi i jednym nowym fragmentem | Embedding liczony tylko dla nowego, reszta z cache'u (te same wektory) |
 | T15 | Integracyjny | `ingest._flush()` | Fragment, którego treść ma już ponad `BOILERPLATE_URLS` stron | Nie zapisany; wcześniejsze kopie usunięte z `chunks`, hash zostaje w `pages.chunk_hashes` |
+| T16 | Jednostkowy | `_rrf()` | Dwie listy: fragment na 3. miejscu obu i fragment 1. tylko na jednej | Pierwszy wygrywa (2/63 > 1/61); każdy fragment raz, `score` = −Σ 1/(60 + pozycja) |
+| T17 | Integracyjny | `retrieve_hybrid()` | Pytanie ze słowem obecnym tylko w fragmentach dalekich wektorowo; `RETRIEVAL_MODE=foo` | Fragmenty z części pełnotekstowej mają `dist` (próg działa); nieznany tryb → `ValueError` przy imporcie |
 
 ## 6.3 Instrukcja uruchomienia testów
 
@@ -52,7 +54,9 @@ Niezależnie od testów kodu mierzymy jakość samego wyszukiwania (bez LLM-a) s
 z ręcznie oznaczonymi stronami (ocena `2` = odpowiada na pytanie, `1` = częściowo)
 oraz 18 pytań spoza zakresu (pogoda, inne uczelnie, wiedza ogólna, small talk, prośby
 o kod, prompt injection). Pierwsze 8 pytań spoza zakresu powstało razem ze zbiorem,
-10 kolejnych dodano przy doborze progu odcięcia (patrz niżej).
+10 kolejnych dodano przy doborze progu odcięcia (patrz niżej). Przy porównaniu trybów
+wyszukiwania doszło 8 pytań w zakresie ze skrótami i nazwami własnymi (id `skrot-*`,
+razem 56 w zakresie) — wyniki wcześniejszych pomiarów dotyczą 48 pytań.
 
 Oznaczanie łączyło kandydatów z wyszukiwania wektorowego, wyszukiwania po słowach
 kluczowych i ręcznego przejrzenia serwisu `us.edu.pl/student/` — żeby etykiety nie
@@ -416,6 +420,144 @@ usunięciem boilerplate'u; dla pozostałych wyniki przed i po usunięciu są ide
   zdominowane przez WH. Po zmianie zamiast 5 fragmentów jednej strony
   `/student/en/…/dziekanat-wydzialu-humanistycznego/contact` są 2 i trzy inne strony.
   Do zbadania osobno.
+
+**Wyszukiwanie hybrydowe: wektorowe + pełnotekstowe** (2026-11-03; 42 330 fragmentów po
+usunięciu boilerplate'u, k = `TOP_K` = 8, `MAX_PER_URL` = 2).
+
+Embeddingi słabo radzą sobie ze skrótami i nazwami własnymi (USOS, WNŚiT, ELS, IRK,
+CINiBA, numery budynków), a Postgres nie ma konfiguracji językowej dla polskiego.
+Zmiany:
+
+- **Kolumna `chunks.content_tsv`** — `GENERATED ALWAYS AS (to_tsvector('simple',
+  immutable_unaccent(content))) STORED` z indeksem GIN. `'simple'` nie ma stemmingu ani
+  stop-słów; `unaccent` zrównuje „WNŚiT” i „wnsit”. `unaccent()` jest `STABLE`, więc
+  kolumna używa opakowania `immutable_unaccent()` (jawny słownik `public.unaccent`).
+  Migracja w `_ensure_schema()` (dodanie kolumny przepisało tabelę: ok. 1 min) i w
+  `init.sql`; ingestia nie zmienia się — Postgres liczy kolumnę sam.
+- **`retrieve_hybrid()`**: osobno 40 kandydatów (5·k, min. 40) z HNSW i 40 z
+  pełnotekstowego (`ts_rank_cd`, przy remisie bliższy wektorowo), złączone przez
+  Reciprocal Rank Fusion: `score = Σ 1/(60 + pozycja)`. RRF, a nie ważona suma, bo
+  odległość kosinusowa i `ts_rank_cd` mają różne skale i kierunki, a rozkład
+  `ts_rank_cd` zmienia się z każdym pytaniem (komentarz w `_rrf()`).
+- **`dist` dla każdego wyniku** — dla fragmentów z części pełnotekstowej odległość jest
+  liczona w tym samym zapytaniu (`embedding <=> wektor`), więc próg `MAX_DISTANCE`
+  działa jak dotąd. Duplikaty i limit na stronę: bez zmian (`_select()`).
+- **`RETRIEVAL_MODE=vector|hybrid`** (env, domyślnie `vector`); `evaluate.py --mode`.
+
+*Jak budować zapytanie pełnotekstowe.* Etykiet nie zmieniano; 48 pytań, bez progu:
+
+| Wariant zapytania | Hit@1 | Hit@3 | Hit@8 | Hit@10 | nDCG@8 | MRR@10 | Bez trafienia w top-10 |
+|---|---|---|---|---|---|---|---|
+| samo wektorowe | **0.542** | 0.750 | 0.854 | 0.896 | **0.525** | **0.649** | 5 |
+| `websearch_to_tsquery` (AND wszystkich słów) | **0.542** | 0.750 | 0.854 | 0.896 | **0.525** | **0.649** | 5 |
+| AND słów bez stop-słów | **0.542** | 0.750 | 0.854 | 0.896 | 0.528 | 0.646 | 5 |
+| OR wszystkich słów | 0.396 | 0.646 | 0.771 | 0.792 | 0.414 | 0.525 | 10 |
+| **OR słów bez stop-słów** (w kodzie) | 0.438 | 0.771 | 0.896 | 0.896 | 0.493 | 0.597 | 5 |
+| OR, słowa obcięte do 6 liter + `:*` | 0.500 | 0.688 | 0.875 | 0.875 | 0.492 | 0.611 | 6 |
+| OR, tylko słowa z ≤ 2% fragmentów | 0.396 | 0.750 | **0.917** | **0.917** | 0.489 | 0.573 | 4 |
+| OR, waga listy pełnotekstowej 0.5 w RRF | 0.458 | **0.812** | 0.896 | **0.917** | 0.527 | 0.631 | – |
+
+- **AND nic nie wnosi.** Bez stemmingu pytanie musi zawierać każde słowo w tej samej
+  formie co fragment: `websearch_to_tsquery` znajduje cokolwiek dla 2 z 48 pytań, AND bez
+  stop-słów — dla 8. Wynik jest wtedy praktycznie taki sam jak wektorowy.
+- **OR potrzebuje listy stop-słów** (`FTS_STOPWORDS`: „jak”, „się”, „do”…) — `ts_rank_cd`
+  nie zna IDF, więc bez niej o kolejności decydują najczęstsze słowa.
+- Pozostałe warianty (pseudo-stemming przez prefiks, odcięcie częstych słów, waga w RRF)
+  przesuwają tylko wymianę Hit@1 na Hit@8 — żaden nie poprawia obu naraz. W kodzie
+  zostaje OR bez stop-słów i standardowy RRF bez wag (najprostszy wariant).
+
+*Porównanie trybów* (`python evaluation/evaluate.py --mode vector|hybrid --k 1 3 5 8 10
+--threshold-sweep`). „Po progu” = top-8 po odrzuceniu fragmentów dalszych niż 0.43 — to,
+co naprawdę dostaje LLM:
+
+| Zbiór | Tryb | Hit@1 | Hit@3 | Hit@8 | Hit@10 | nDCG@8 | Recall@10 | MRR@10 | Różnych stron w top-8 | Hit@1 po progu | Hit@8 po progu |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 48 pytań | vector | **0.542** | 0.750 | 0.854 | 0.896 | **0.525** | 0.632 | **0.649** | 6.35 | **0.542** | 0.833 |
+| 48 pytań | hybrid | 0.438 | **0.771** | **0.896** | 0.896 | 0.493 | **0.658** | 0.597 | 6.69 | 0.417 | 0.833 |
+| 56 pytań | vector | **0.571** | 0.786 | 0.875 | 0.911 | **0.562** | 0.659 | **0.682** | 6.21 | **0.554** | 0.804 |
+| 56 pytań | hybrid | 0.500 | 0.786 | **0.911** | 0.911 | 0.535 | **0.679** | 0.641 | 6.64 | 0.446 | 0.804 |
+| 8 ze skrótami | vector | 0.750 | **1.000** | 1.000 | 1.000 | 0.784 | **0.823** | 0.875 | 5.38 | 0.625 | 0.625 |
+| 8 ze skrótami | hybrid | **0.875** | 0.875 | 1.000 | 1.000 | **0.789** | 0.802 | **0.906** | 6.38 | 0.625 | 0.625 |
+
+Bez progu hybryda zamienia Hit@1 (−5 pytań z 48) na Hit@3–8 (+1–2 pytania). Na 56
+pytaniach pozycja pierwszego trafienia poprawia się w 9 pytaniach, pogarsza w 17, w 30
+się nie zmienia. RRF nagradza obecność na obu listach: fragment na 40. miejscu obu list
+(2/100) wygrywa z pierwszym tylko na wektorowej (1/61), a 40 kandydatów z pełnotekstowego
+to zwykle szum — zapytanie OR pasuje do mediany 2 140 fragmentów.
+
+Przykłady (pozycja pierwszego trafienia, vector → hybrid):
+
+- `dziekanat-wtl` 5 → 1 — top-4 wektorowego to „zdalny kontakt z dziekanatami” i
+  angielskie podstrony; słowa „teologicznego”, „dziekanat”, „kontakt” wprost wyciągają
+  stronę zbiorczą dziekanatów (1.) i dziekanat WTL (3.).
+- `erasmus` 10 → 2 — dosłowne słowa pytania podnoszą stronę rekrutacji na wyjazdy
+  (odległość 0.386, przechodzi próg).
+- `szkolenia-obowiazkowe` 7 → 1 i `rzecznik-praw-studenta` brak → 3 — „obowiązkowe
+  szkolenia”, „zgłosić” są w tytułach trafnych stron, ale ich odległość (0.465, 0.458)
+  jest powyżej progu 0.43, więc **po progu zysk znika**.
+- `akademik` 6 → brak, `haslo-konto` 9 → brak — trafne strony (`akademiki-2`,
+  `konta-studenckie`) wypadają z top-10; miejsca zajmują stara aktualność o akademikach z
+  2016 r. i strony pomocy usnet dla pracowników, które pasują słowami.
+- `skrot-wnsit` („Gdzie jest dziekanat WNŚiT?”) 2 → 4 — strony dziekanatu piszą „WNST”
+  albo pełną nazwę, „WNŚiT” jest w 3 fragmentach (komunikaty o projektach); część
+  pełnotekstowa podnosi więc dziekanaty innych wydziałów po słowie „dziekanat”.
+- `poczta-studencka` 1 → 4 — na górze `usnet…/konta-studenckie/aktywacja-konta`
+  (aktywacja konta studenta, z którego powstaje adres e-mail). Strona może odpowiadać
+  na pytanie, ale nie ma jej w etykietach — zgodnie z zasadą ich nie zmieniano; przy
+  kolejnym przeglądzie etykiet warto przejrzeć kandydatów z obu trybów.
+
+**Pytania ze skrótami.** 8 nowych pytań: ELS, USOSweb (rejestracja na przedmioty),
+CAS/IRK (hasło na pierwszym roku), CINiBA (zapis), FortiClient, dziekanat WNŚiT, RPSiD
+(zgłoszenie sprawy), „ul. Bankowa 12”. Strony oznaczono po przeczytaniu ich treści w
+bazie; kandydatów zebrano z top-10 obu trybów i wyszukiwania `~` po skrócie w
+`chunks.content`. Wszystkie 20 oznaczonych stron jest w bazie.
+
+- **Ranking skrótów nie jest problemem.** Wektorowe ma trafienie w top-3 dla 8/8 pytań
+  i na 1. miejscu dla 6/8; hybryda poprawia `skrot-bankowa12` (2 → 1), pogarsza
+  `skrot-wnsit`. Skrót stoi zwykle obok pełnej nazwy w tytule strony albo w prefiksie
+  fragmentu („Elektroniczna legitymacja studencka (ELS)”), więc bge-m3 go „zna”.
+- **Problemem jest próg odległości.** Pytania ze skrótami są dalej od bazy: `skrot-wnsit`
+  ma top-1 0.451, `skrot-rpsid` 0.441 — oba odrzucane przy 0.43 — a w `skrot-bankowa12`
+  trafny fragment (0.438) jest odcinany. Po progu oba tryby mają trafienie w 5/8. Tego
+  hybryda nie naprawi, bo próg działa na `dist`, a `dist` fragmentu znalezionego
+  pełnotekstowo jest taka sama jak w trybie wektorowym.
+
+**Próg `MAX_DISTANCE`** (56 pytań w zakresie, 18 spoza):
+
+| Próg | Tryb | Spoza zakresu odrzucone | W zakresie odrzucone | W tym strata | Trafienia utracone łącznie |
+|---|---|---|---|---|---|
+| 0.43 | vector | 8/18 | 2/56 | 2 | 4 |
+| 0.43 | hybrid | 8/18 | 2/56 | 2 | 6 |
+| 0.47 | vector | 5/18 | 0/56 | 0 | 0 |
+| 0.47 | hybrid | 4/18 | 1/56 | 1 | 2 |
+
+Na starych 48 pytaniach przy 0.43 bez zmian: 0/48 odrzuconych, utracone łącznie 1
+(vector) i 3 (hybrid). Hybryda traci przy progu więcej, bo jej zyski to fragmenty dalekie
+wektorowo. Wstawia też do top-8 fragmenty bardzo dalekie (0.6–0.7, np. „Działalność
+Komisji ds. Równości” przy pytaniu o obowiązkowe szkolenia) — próg je usuwa, ale LLM
+dostaje wtedy mniej kontekstu: follow-up „a wnst?” (T12) zwraca po progu 4 fragmenty
+zamiast 8. Próg 0.43 zostaje — 0.47 przepuściłby o 3 pytania spoza zakresu więcej, a
+dwa odrzucane pytania to skróty na 8 nowych; do decyzji przy większym zbiorze.
+
+**Czas** `retrieve()` bez liczenia embeddingu (74 pytania, mediana / p90, dwa przebiegi):
+vector 27 / 29 ms, hybrid 101–105 / 160–171 ms — zapytanie OR dopasowuje tysiące fragmentów i dla każdego
+liczy `ts_rank_cd`. Embedding pytania (bge-m3 na CPU) i tak trwa dłużej.
+
+**Wniosek: domyślnie `RETRIEVAL_MODE=vector`.**
+
+- Na tym, co dostaje LLM (top-8 po progu), hybryda nie daje nic: Hit@8 po progu jest
+  identyczny (40/48, 45/56, 5/8), a Hit@1 spada (26 → 20 z 48, 31 → 25 z 56).
+- Bez progu zysk na Hit@8 (+2 pytania z 48) jest okupiony Hit@1, nDCG@8 i MRR, a 17
+  pytań z 56 dostaje pierwsze trafienie niżej (9 wyżej).
+- Pytania ze skrótami nie wymagają hybrydy w rankingu — tracą przez próg, nie przez
+  ranking.
+- Hybryda jest ~4× wolniejsza po stronie bazy i wstawia do kontekstu słowny szum.
+
+Tryb `hybrid` zostaje w kodzie (wybór przez env). Warto do niego wrócić, gdy: (1) ranking
+pełnotekstowy będzie ważył rzadkie słowa (IDF/BM25 — np. rozszerzenie `pg_search` albo
+tabela częstości leksemów), (2) próg będzie uwzględniał dopasowanie słowne (np. fragment
+z rzadkim słowem pytania może być dalej niż `MAX_DISTANCE`), (3) etykiety zostaną
+przejrzane z kandydatami z obu trybów, (4) zbiór pytań ze skrótami będzie większy niż 8.
 
 !!! warning "Status"
     Katalog `tests/` jest **planowany** — testy zostaną zaimplementowane w kolejnych

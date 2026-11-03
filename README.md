@@ -251,6 +251,7 @@ Format jednej linii `queries.jsonl`:
 | `OLD_NEWS_PENALTY` | kara dodawana do odległości (tylko przy sortowaniu) dla aktualności i wydarzeń starszych niż `OLD_NEWS_DAYS`; `0` = wyłączone | `0` |
 | `OLD_NEWS_DAYS` | od ilu dni aktualność/wydarzenie jest „stare" | `730` |
 | `MAX_PER_URL` | najwyżej tyle fragmentów z jednej strony w wynikach `retrieve()`; `0` = bez limitu | `2` |
+| `RETRIEVAL_MODE` | `vector` — samo wyszukiwanie wektorowe; `hybrid` — wektorowe + pełnotekstowe (`chunks.content_tsv`) połączone przez RRF; porównanie w `docs/testy.md` (6.4) | `vector` |
 | `BOILERPLATE_URLS` | fragment o tej samej treści na więcej stronach to boilerplate i nie trafia do bazy; `0` = wyłączone | `20` |
 | `ENABLE_THINKING` | tryb rozumowania Qwen3 (wolniejszy) | `false` |
 | `CRAWL_LIMIT` | maks. liczba stron na jeden crawl | `6000` |
