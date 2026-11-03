@@ -22,11 +22,14 @@ Użytkownik (terminal)
     cli.py
        │
        ├─ retrieval: pgvector (embeddingi bge-m3, zapytanie z kontekstem rozmowy)
+       ├─ wybór TOP_K: bez powtórzonej treści, maks. 2 fragmenty z jednej strony
+       ├─ próg odległości: nic dość bliskiego → stała odpowiedź, bez LLM-a
        └─ generacja: Ollama / vLLM (Qwen3, API OpenAI-compatible, streaming)
 ```
 
 1. Pytanie użytkownika (wraz z kilkoma poprzednimi turami) jest **embeddowane lokalnie**.
-2. Zapytanie wektorowe do **PostgreSQL + pgvector** zwraca `TOP_K` najbliższych fragmentów.
+2. Zapytanie wektorowe do **PostgreSQL + pgvector** zwraca `TOP_K` najbliższych fragmentów —
+   ta sama treść tylko raz, najwyżej `MAX_PER_URL` (2) fragmenty z jednej strony.
 3. Fragmenty trafiają do **system promptu** jako kontekst.
 4. **Model LLM** (Qwen3 przez Ollama/vLLM) generuje odpowiedź strumieniowo.
 
@@ -39,6 +42,7 @@ Wiedza w bazie utrzymywana jest osobnym, **inkrementalnym crawlerem**
 - 🧠 **Lokalny LLM** Qwen3 (domyślnie `qwen3:8b`) — bez wysyłania danych na zewnątrz
 - 💬 **Rozmowa wieloturowa** z retrievalem uwzględniającym kontekst poprzednich pytań
 - 🕸️ **Inkrementalny crawler** BFS z równoległym pobieraniem (limit żądań na domenę) i pomijaniem niezmienionych stron
+- ♻️ **Cache embeddingów** (ta sama treść liczona raz) i pomijanie **boilerplate'u** powtarzanego na wielu stronach
 - 🔗 Każda odpowiedź zawiera **źródłowy URL**
 - 🖥️ Działa na **Linux / macOS / Windows** (Python 3.11+), pełna obsługa polskich znaków
 

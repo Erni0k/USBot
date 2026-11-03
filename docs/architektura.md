@@ -16,6 +16,7 @@ Użytkownik (terminal)
    │  embed(zapytanie) ──► SentenceTransformer              │
    │                       (BAAI/bge-m3, 1024 dim)          │
    │  retrieve()     ──► PostgreSQL + pgvector (operator <=>)│
+   │  _select()      ──► TOP_K bez duplikatów, ≤2 na stronę │
    │  build_context()──► string z TOP_K fragmentów          │
    │  LLM API call   ──► Ollama / vLLM (Qwen3, streaming)    │
    ▼                                                        │
@@ -24,13 +25,15 @@ Użytkownik (terminal)
  [Oddzielny proces — aktualizacja wiedzy]
  ingestion/ingest.py ──► scrape.crawl()  (BFS, równoległy fetch, 304)
                          chunking po nagłówkach + prefiks tytułu/sekcji
-                         batch embed ──► UPSERT chunks + pages
+                         pomijanie boilerplate'u (ta sama treść na >20 stronach)
+                         batch embed (cache po content_hash) ──► UPSERT chunks + pages
 ```
 
 **Przepływ przy każdym pytaniu:** pytanie (wraz z kontekstem kilku poprzednich tur)
-jest embeddowane lokalnie → zapytanie wektorowe do PostgreSQL zwraca `TOP_K`
-najbliższych fragmentów → kontekst wbudowywany jest w system prompt → model LLM
-generuje odpowiedź strumieniowo.
+jest embeddowane lokalnie → zapytanie wektorowe do PostgreSQL zwraca kandydatów →
+`_select()` wybiera `TOP_K`: ta sama treść tylko raz, najwyżej `MAX_PER_URL` fragmentów
+z jednej strony → fragmenty dalsze niż `MAX_DISTANCE` są odrzucane → kontekst
+wbudowywany jest w system prompt → model LLM generuje odpowiedź strumieniowo.
 
 ## 2.2 Crawler — przepływ ingestii
 
@@ -80,6 +83,14 @@ priorytetowych seedów i sitemapy. Kluczowe mechanizmy:
   bez zmian, pomijany jest kosztowny re-embedding. Zmiana chunkingu nie zmienia hasha,
   dlatego `pages.chunker_version` pamięta wersję podziału (`CHUNKER_VERSION`), a strony
   z inną wersją są pobierane i embedowane od nowa.
+- **Cache embeddingów** — każdy fragment ma `content_hash` (treść z prefiksem). Przed
+  liczeniem embeddingów ingestia bierze gotowe wektory dla treści, które już są w
+  `chunks`: ten sam fragment na innej stronie i niezmienione sekcje edytowanej strony
+  nie są embedowane ponownie.
+- **Boilerplate** — `body_hash` (treść bez prefiksu) rozpoznaje ten sam tekst na różnych
+  stronach. Treść obecna na więcej niż `BOILERPLATE_URLS` (20) stronach — przyciski
+  „Udostępnij”, puste nagłówki — nie trafia do `chunks`. Liczba stron liczona jest po
+  `pages.chunk_hashes`, czyli hashach wszystkich fragmentów strony, także pominiętych.
 - **Aktualizacja per-URL** — zamiast `TRUNCATE` całej tabeli, zmienione strony mają
   podmieniane fragmenty (`DELETE` + `INSERT`), a stan zapisywany w tabeli `pages`.
 

@@ -11,6 +11,7 @@ Użytkownik (terminal)
     cli.py
        │
        ├─ retrieval: pgvector (embeddingi bge-m3, zapytanie z kontekstem rozmowy)
+       ├─ wybór TOP_K: bez powtórzonej treści, maks. 2 fragmenty z jednej strony
        ├─ próg odległości: nic dość bliskiego → stała odpowiedź, bez LLM-a
        └─ generacja: Ollama / vLLM (Qwen3, API OpenAI-compatible)
 ```
@@ -22,7 +23,7 @@ us-chatbot/
 ├── cli.py              # aplikacja terminalowa (punkt wejścia)
 ├── requirements.txt    # zależności Python
 ├── ingestion/
-│   ├── ingest.py       # pipeline: crawl → chunking → embeddingi → pgvector
+│   ├── ingest.py       # pipeline: crawl → chunking → embeddingi (cache) → pgvector
 │   └── scrape.py       # inkrementalny crawler BFS (stały pool żądań, limit na domenę)
 ├── evaluation/
 │   ├── evaluate.py     # metryki retrievalu: Hit/Recall/Precision/nDCG@k, MRR, dobór progu

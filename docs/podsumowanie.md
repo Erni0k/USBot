@@ -30,6 +30,14 @@
   dopiero prefiks `<tytuł strony> > <nagłówek sekcji>` w każdym fragmencie (Hit@1
   0,50 → 0,54, MRR 0,630 → 0,643). Zmiana chunkingu nie zmienia hasha tekstu, więc
   doszła wersja chunkera zapisywana w `pages`.
+- **Powtórzona treść i jedna strona w całym kontekście** — kopie tej samej treści
+  (strona i jej nieprzetłumaczona wersja pod `/student/en/`, przyciski „Udostępnij”)
+  stanowią tylko 2–4% fragmentów, ale prefiks z tytułem sprawił, że fragmenty jednej
+  strony zajmowały razem wiele miejsc: średnio 5,5 różnych stron w top-8, w skrajnych
+  przypadkach 7 z 8 miejsc z jednej strony. Deduplikacja po hashu treści i limit 2
+  fragmentów na stronę dały 6,4 strony w top-8 i Hit@10 0,854 → 0,896. Deduplikacja
+  wymagała rozstrzygania remisów — identyczne kopie mają tę samą odległość i bez reguły
+  (krótszy URL wygrywa) zostawała przypadkowa kopia `/en/`.
 - **Port bazy danych** — domyślny port PostgreSQL (5432) bywał zajęty przez lokalne
   instalacje, stąd mapowanie na 5433 w `docker-compose.yml`.
 - **Filtrowanie odpowiedzi** — zapewnienie, że bot nie odpowiada spoza kontekstu,
@@ -58,10 +66,16 @@
   (`OLD_NEWS_PENALTY`, domyślnie wyłączona).
 - **Próg odcięcia** `MAX_DISTANCE` — gdy nic nie jest dość blisko, bot odpowiada stałym
   tekstem bez wywołania LLM-a.
+- **Różnorodność wyników** — w top-k ta sama treść występuje raz, a jedna strona zajmuje
+  najwyżej `MAX_PER_URL` (2) miejsc; zwolnione miejsca zajmują kolejni kandydaci.
+- **Cache embeddingów i boilerplate** — `content_hash` w `chunks`: treść, która już jest
+  w bazie, nie jest embedowana ponownie; treść na ponad 20 stronach (`BOILERPLATE_URLS`)
+  nie trafia do bazy.
 - **Ewaluacja retrievalu** (`evaluation/evaluate.py`): 48 pytań z oznaczonymi
   stronami + 18 spoza zakresu; Hit/Recall/Precision/nDCG@k, MRR, raport pokrycia
   bazy, dobór progu. Wynik bazowy 1a: Hit@10 0,917, MRR 0,630; po chunkingu z
-  prefiksem: Hit@1 0,542, MRR 0,643 (patrz [Testy](testy.md)).
+  prefiksem: Hit@1 0,542, MRR 0,643; po deduplikacji i limicie na stronę: Hit@10 0,896,
+  MRR 0,649 (patrz [Testy](testy.md)).
 - Crawl wielu domen: `us.edu.pl`, `usnet.us.edu.pl`, `eduroam.us.edu.pl`.
 - **Dopytywanie o dziekanat** — przy pytaniu bez wskazania wydziału bot prosi o
   doprecyzowanie zamiast zgadywać.
@@ -97,13 +111,15 @@
   trafności i halucynacji.
 - **Konteneryzacja pełnej aplikacji** — `Dockerfile` dla `cli.py` / serwera webowego.
 - **Pruning bazy** — automatyczne usuwanie fragmentów stron, które zniknęły ze źródła.
-- **Różnorodność wyników** — limit fragmentów z jednej strony w top-k. Z prefiksem
-  fragmenty jednej strony są do siebie podobne i zajmują kilka miejsc naraz (średnio
-  6,7 różnych stron w top-10 zamiast 7,9), stąd spadek Hit@10 z 0,917 do 0,854.
+- **Limit 1 fragmentu na stronę** — na etykietach URL-owych wygrywa z obecnym limitem 2
+  (Hit@8 0,854 → 0,896), ale może odcinać drugą sekcję strony z odpowiedzią; do decyzji
+  po ewaluacji samych odpowiedzi LLM-a.
+- **Follow-upy po zmianie wydziału** — „a wnst?” po pytaniu o dziekanat WH nie zwraca
+  dziekanatu WNST (zapytanie z historią jest zdominowane przez WH).
 - **Angielskie wersje portalu** (`/student/en/`) — pomijanie lub obniżanie w wynikach
   dla pytań po polsku.
 
 ---
 
 *Dokument odzwierciedla stan kodu źródłowego repozytorium
-[github.com/Erni0k/USBot](https://github.com/Erni0k/USBot). Wersja 0.4 — listopad 2026.*
+[github.com/Erni0k/USBot](https://github.com/Erni0k/USBot). Wersja 0.5 — listopad 2026.*

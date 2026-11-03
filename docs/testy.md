@@ -23,6 +23,9 @@
 | T10 | Manualny | API LLM | Pytanie o godziny dziekanatu | Odpowiedź po polsku z URL |
 | T11 | E2E | `cli.main()` | Pytanie spoza zakresu (`retrieve_for_chat()` zwraca pustą listę) | Stały tekst „Nie mam tej informacji…”, brak wywołania LLM |
 | T12 | Integracyjny | `retrieve_for_chat()` | Follow-up „a wnst?” po pytaniu o dziekanat; pytanie w zakresie po kilku spoza zakresu | Oba nieodrzucone, trafne strony w wynikach |
+| T13 | Jednostkowy | `_select()` | Kandydaci z powtórzonym `body_hash` i 4 fragmentami jednej strony | Każda treść raz (najbliższa, przy remisie krótszy URL), ≤ `MAX_PER_URL` na stronę, nadal `k` wyników |
+| T14 | Integracyjny | `ingest._flush()` | Strona z niezmienionymi i jednym nowym fragmentem | Embedding liczony tylko dla nowego, reszta z cache'u (te same wektory) |
+| T15 | Integracyjny | `ingest._flush()` | Fragment, którego treść ma już ponad `BOILERPLATE_URLS` stron | Nie zapisany; wcześniejsze kopie usunięte z `chunks`, hash zostaje w `pages.chunk_hashes` |
 
 ## 6.3 Instrukcja uruchomienia testów
 
@@ -297,7 +300,8 @@ co dostaje LLM.
   miejsc naraz. Dlatego Hit@10 spada 0.917 → 0.854: `erasmus`, `haslo-konto` i `wladze`
   miały w 1A trafienie na pozycji 2–10, a teraz wypadają z top-10 (polskie i angielskie
   wersje tej samej strony portalu, kilka fragmentów „Kalendarium"). Pomogłoby
-  ograniczenie liczby fragmentów z jednej strony w wynikach — osobna zmiana.
+  ograniczenie liczby fragmentów z jednej strony w wynikach — wprowadzone niżej
+  (`MAX_PER_URL`).
 - **Kara za stare aktualności — zostawiona wyłączona** (`OLD_NEWS_PENALTY=0`). Robi to,
   do czego jest: wyników z rokiem 2016–2021 w adresie (bez portalu studenta) jest w top-8
   pytań w zakresie 27 bez kary, 17 przy 0.02 i 6 przy 0.05, a list rektora z 2020 r.
