@@ -38,6 +38,9 @@ CRAWL_WORKERS = int(os.getenv("CRAWL_WORKERS", "6"))
 EMBED_BATCH   = int(os.getenv("EMBED_BATCH", "16"))   # ile stron naraz do embeddingu
 CRAWL_FRESH   = os.getenv("CRAWL_FRESH", "false").lower() == "true"
 CRAWL_REFETCH = os.getenv("CRAWL_REFETCH", "false").lower() == "true"  # po zmianie ekstrakcji tekstu
+# Fragment, ktorego tresc (bez prefiksu) wystepuje na wiecej niz BOILERPLATE_URLS stronach,
+# to boilerplate (przyciski "Udostepnij", same naglowki) - nie trafia do chunks. 0 = wylaczone.
+BOILERPLATE_URLS = int(os.getenv("BOILERPLATE_URLS", "20"))
 
 # Wersja podzialu na fragmenty (sekcje, prefiks, rozmiar). Zapisywana w pages.chunker_version;
 # strony zapisane inna wersja sa przy starcie pobierane i embedowane od nowa. Sam hash
@@ -70,8 +73,76 @@ def _ensure_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE pages ADD COLUMN IF NOT EXISTS chunker_version INT")
     conn.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS page_type TEXT")
     conn.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ")
+    conn.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_hash TEXT")
+    conn.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS body_hash TEXT")
+    conn.execute("ALTER TABLE pages ADD COLUMN IF NOT EXISTS chunk_hashes TEXT[]")
     conn.execute("CREATE INDEX IF NOT EXISTS chunks_url_idx ON chunks (url)")
+    conn.execute("CREATE INDEX IF NOT EXISTS chunks_content_hash_idx ON chunks (content_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS chunks_body_hash_idx ON chunks (body_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS pages_chunk_hashes_idx ON pages USING gin (chunk_hashes)")
+    _backfill_hashes(conn)
     conn.commit()
+
+
+def _text_hash(text: str) -> str:
+    """SHA-256 tekstu po ujednoliceniu bialych znakow (spacje, nowe linie, nbsp)."""
+    return hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()
+
+
+def _strip_prefix(title: str | None, content: str) -> str:
+    """Tresc zapisanego fragmentu bez prefiksu "<tytul> > <naglowek>" (pierwszej linii)."""
+    first, sep, rest = content.partition("\n")
+    if title and sep and (first == title or first.startswith(title + " > ")):
+        return rest
+    return content
+
+
+def _backfill_hashes(conn: psycopg.Connection) -> None:
+    """Uzupelnia hashe fragmentow zapisanych przed dodaniem kolumn content_hash/body_hash."""
+    rows = conn.execute("SELECT id, title, content FROM chunks WHERE content_hash IS NULL").fetchall()
+    if rows:
+        print(f"Uzupelniam content_hash/body_hash dla {len(rows)} fragmentow")
+        with conn.cursor() as cur:
+            cur.executemany(
+                "UPDATE chunks SET content_hash = %s, body_hash = %s WHERE id = %s",
+                [(_text_hash(c), _text_hash(_strip_prefix(t, c)), i) for i, t, c in rows],
+            )
+    conn.execute("""
+        UPDATE pages p SET chunk_hashes = c.hashes
+        FROM (SELECT url, array_agg(body_hash ORDER BY id) AS hashes FROM chunks
+              WHERE url IN (SELECT url FROM pages WHERE chunk_hashes IS NULL)
+              GROUP BY url) c
+        WHERE p.url = c.url
+    """)
+
+
+def _boilerplate(conn: psycopg.Connection, hashes: list[str] | None = None) -> set[str]:
+    """Hashe tresci (body_hash) wystepujace na wiecej niz BOILERPLATE_URLS stronach.
+
+    Liczymy po pages.chunk_hashes - hashach WSZYSTKICH fragmentow strony, takze tych
+    niezapisanych w chunks. Liczac po chunks, po wykluczeniu boilerplate'u licznik
+    spadlby do zera i kolejna strona zapisalaby go z powrotem.
+    Z `hashes` sprawdzamy tylko podane (indeks GIN na chunk_hashes).
+    """
+    if BOILERPLATE_URLS <= 0:
+        return set()
+    sql = "SELECT h FROM pages, unnest(chunk_hashes) AS h"
+    params: list = []
+    if hashes is not None:
+        sql += " WHERE chunk_hashes && %s AND h = ANY(%s)"
+        params += [hashes, hashes]
+    sql += " GROUP BY h HAVING count(DISTINCT url) > %s"
+    return {r[0] for r in conn.execute(sql, params + [BOILERPLATE_URLS])}
+
+
+def _purge_boilerplate(conn: psycopg.Connection) -> int:
+    """Usuwa z chunks fragmenty boilerplate'u (np. po zmianie BOILERPLATE_URLS)."""
+    bp = _boilerplate(conn)
+    if not bp:
+        return 0
+    n = conn.execute("DELETE FROM chunks WHERE body_hash = ANY(%s)", (list(bp),)).rowcount
+    conn.commit()
+    return n
 
 
 def _load_cache(conn: psycopg.Connection) -> dict[str, dict]:
@@ -124,18 +195,23 @@ def _sections(text: str) -> list[tuple[str | None, str]]:
     return [(h, "\n".join(lines)) for h, lines in sections if lines]
 
 
-def _chunks(page: scrape.Page) -> list[str]:
+def _chunks(page: scrape.Page) -> list[dict]:
     """Fragmenty strony: sekcje po naglowkach, za dlugie ciete splitterem.
 
     Kazdy fragment dostaje prefiks "<tytul strony> > <naglowek sekcji>" - bez niego
     np. "Godziny pracy: pon 10-14" nie mowi, ktorego dziekanatu dotyczy. Prefiks
     jest czescia tresci, z ktorej liczony jest embedding, i trafia tez do LLM-a.
+
+    content_hash (z prefiksem) to klucz cache'u embeddingow; body_hash (bez prefiksu)
+    rozpoznaje ten sam tekst na roznych stronach - boilerplate i duplikaty w retrieve().
     """
     chunks = []
     for heading, body in _sections(page.text):
         prefix = " > ".join(p for p in (page.title, heading) if p)
         for part in splitter.split_text(body):
-            chunks.append(f"{prefix}\n{part}" if prefix else part)
+            content = f"{prefix}\n{part}" if prefix else part
+            chunks.append({"content": content, "content_hash": _text_hash(content),
+                           "body_hash": _text_hash(part)})
     return chunks
 
 
@@ -157,48 +233,70 @@ def _touch_page(conn: psycopg.Connection, page: scrape.Page) -> None:
     conn.commit()
 
 
-def _flush(conn: psycopg.Connection, pending: list[dict]) -> None:
-    """Embeduje i zapisuje paczke ZMIENIONYCH stron w jednej transakcji."""
-    all_chunks = [c for p in pending for c in p["chunks"]]
-    if not all_chunks:
-        return
+def _flush(conn: psycopg.Connection, pending: list[dict]) -> tuple[int, int, int]:
+    """Embeduje i zapisuje paczke ZMIENIONYCH stron w jednej transakcji.
 
-    all_embeddings = model.encode(all_chunks, normalize_embeddings=True, batch_size=64)
-
-    idx = 0
+    Embedding liczymy tylko dla tresci, ktorej content_hash nie ma jeszcze w chunks:
+    ten sam fragment na kilku stronach i niezmienione sekcje edytowanej strony biora
+    gotowy embedding z bazy. Fragmenty boilerplate'u (_boilerplate) nie sa zapisywane.
+    Zwraca (policzone embeddingi, wziete z cache'u, pominiety boilerplate).
+    """
     with conn.cursor() as cur:
+        # Najpierw stan stron - chunk_hashes paczki licza sie juz w _boilerplate()
         for p in pending:
-            chunks = p["chunks"]
-            embs = all_embeddings[idx: idx + len(chunks)]
-            idx += len(chunks)
-
-            # Zastap stare fragmenty tej strony
-            cur.execute("DELETE FROM chunks WHERE url = %s", (p["url"],))
-            for chunk, emb in zip(chunks, embs):
-                cur.execute(
-                    "INSERT INTO chunks (url, title, page_type, published_at, content, embedding) "
-                    "VALUES (%s, %s, %s, %s, %s, %s)",
-                    (p["url"], p["title"], p["page_type"], p["published_at"], chunk, emb),
-                )
-
-            # Zapisz nowy stan strony
             cur.execute(
                 """
                 INSERT INTO pages (url, etag, last_modified, content_hash, links,
-                                   chunker_version, last_crawled)
-                VALUES (%s, %s, %s, %s, %s, %s, now())
+                                   chunker_version, chunk_hashes, last_crawled)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, now())
                 ON CONFLICT (url) DO UPDATE SET
                     etag            = EXCLUDED.etag,
                     last_modified   = EXCLUDED.last_modified,
                     content_hash    = EXCLUDED.content_hash,
                     links           = EXCLUDED.links,
                     chunker_version = EXCLUDED.chunker_version,
+                    chunk_hashes    = EXCLUDED.chunk_hashes,
                     last_crawled    = now()
                 """,
                 (p["url"], p["etag"], p["last_modified"], p["hash"],
-                 json.dumps(p["links"]) if p["links"] else None, CHUNKER_VERSION),
+                 json.dumps(p["links"]) if p["links"] else None, CHUNKER_VERSION,
+                 [c["body_hash"] for c in p["chunks"]]),
             )
+
+        boiler = _boilerplate(conn, list({c["body_hash"] for p in pending for c in p["chunks"]}))
+        keep = [c for p in pending for c in p["chunks"] if c["body_hash"] not in boiler]
+
+        # Cache sprawdzamy przed usunieciem starych fragmentow - to glowne zrodlo trafien
+        cache = dict(cur.execute(
+            "SELECT DISTINCT ON (content_hash) content_hash, embedding FROM chunks "
+            "WHERE content_hash = ANY(%s)",
+            (list({c["content_hash"] for c in keep}),),
+        ).fetchall())
+        missing = {c["content_hash"]: c["content"] for c in keep if c["content_hash"] not in cache}
+        if missing:
+            embs = model.encode(list(missing.values()), normalize_embeddings=True, batch_size=64)
+            cache.update(zip(missing, embs))
+
+        for p in pending:
+            # Zastap stare fragmenty tej strony
+            cur.execute("DELETE FROM chunks WHERE url = %s", (p["url"],))
+            for c in p["chunks"]:
+                if c["body_hash"] in boiler:
+                    continue
+                cur.execute(
+                    "INSERT INTO chunks (url, title, page_type, published_at, content, "
+                    "content_hash, body_hash, embedding) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (p["url"], p["title"], p["page_type"], p["published_at"], c["content"],
+                     c["content_hash"], c["body_hash"], cache[c["content_hash"]]),
+                )
+
+        # Kopie zapisane z innych stron, zanim fragment przekroczyl prog
+        if boiler:
+            cur.execute("DELETE FROM chunks WHERE body_hash = ANY(%s)", (list(boiler),))
     conn.commit()
+    # Kazda tresc embedowana raz: reszta zapisanych fragmentow uzyla gotowego embeddingu
+    n_all = sum(len(p["chunks"]) for p in pending)
+    return len(missing), len(keep) - len(missing), n_all - len(keep)
 
 
 def run() -> None:
@@ -216,6 +314,10 @@ def run() -> None:
             n_purged = _purge_excluded(conn)
             if n_purged:
                 print(f"Usunieto {n_purged} stron wykluczonych przez reguly crawlera")
+            n_boiler = _purge_boilerplate(conn)
+            if n_boiler:
+                print(f"Usunieto {n_boiler} fragmentow boilerplate'u "
+                      f"(ta sama tresc na >{BOILERPLATE_URLS} stronach)")
             cache = _load_cache(conn)
             print(f"Wczytano stan {len(cache)} stron z poprzedniego crawla")
             if CRAWL_REFETCH:
@@ -244,6 +346,11 @@ def run() -> None:
 
         pending: list[dict] = []
         n_new = n_same = 0
+        stats = [0, 0, 0]  # embeddingi policzone, z cache'u, pominiety boilerplate
+
+        def flush() -> None:
+            for i, n in enumerate(_flush(conn, pending)):
+                stats[i] += n
 
         for page in bar:
             # 304 - serwer potwierdzil brak zmian
@@ -282,13 +389,15 @@ def run() -> None:
             bar.set_postfix_str("+ " + page.url.removeprefix("https://us.edu.pl")[:50])
 
             if len(pending) >= EMBED_BATCH:
-                _flush(conn, pending)
+                flush()
                 pending = []
 
         if pending:
-            _flush(conn, pending)
+            flush()
 
-    print(f"Gotowe. Nowych/zmienionych: {n_new}, bez zmian: {n_same}.")
+    print(f"Gotowe. Nowych/zmienionych: {n_new}, bez zmian: {n_same}. Fragmenty: "
+          f"{stats[0]} embeddingow policzonych, {stats[1]} z cache'u, "
+          f"{stats[2]} pominietych (boilerplate).")
 
 
 if __name__ == "__main__":

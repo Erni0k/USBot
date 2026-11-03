@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS chunks (
     page_type   TEXT,                    -- student | wydzial | static | news | event
     published_at TIMESTAMPTZ,            -- data publikacji (article:published_time, data z tresci)
     content     TEXT NOT NULL,           -- z prefiksem "<tytul> > <naglowek sekcji>"
+    content_hash TEXT,                   -- SHA-256 content po ujednoliceniu bialych znakow; cache embeddingow
+    body_hash   TEXT,                    -- to samo bez prefiksu; boilerplate i duplikaty w retrieve()
     embedding   vector(1024) NOT NULL,   -- bge-m3 = 1024 wymiarów
     created_at  TIMESTAMPTZ DEFAULT now()
 );
@@ -19,6 +21,10 @@ CREATE INDEX IF NOT EXISTS chunks_embedding_idx
 -- Szybkie usuwanie/aktualizacja fragmentow danej strony przy re-crawlu
 CREATE INDEX IF NOT EXISTS chunks_url_idx ON chunks (url);
 
+-- Cache embeddingow (content_hash) i wykluczanie boilerplate'u (body_hash)
+CREATE INDEX IF NOT EXISTS chunks_content_hash_idx ON chunks (content_hash);
+CREATE INDEX IF NOT EXISTS chunks_body_hash_idx ON chunks (body_hash);
+
 -- Stan crawlera: pozwala pomijac strony, ktore sie nie zmienily.
 CREATE TABLE IF NOT EXISTS pages (
     url           TEXT PRIMARY KEY,
@@ -27,5 +33,9 @@ CREATE TABLE IF NOT EXISTS pages (
     content_hash  TEXT,            -- SHA-256 wyekstrahowanego tekstu i metadanych
     links         JSONB,           -- linki znalezione na stronie (do BFS przy 304)
     chunker_version INT,           -- CHUNKER_VERSION z ingest.py; inna = podziel od nowa
+    chunk_hashes  TEXT[],          -- body_hash wszystkich fragmentow strony (takze boilerplate'u)
     last_crawled  TIMESTAMPTZ DEFAULT now()
 );
+
+-- Liczenie, na ilu stronach wystepuje fragment (regula boilerplate'u)
+CREATE INDEX IF NOT EXISTS pages_chunk_hashes_idx ON pages USING gin (chunk_hashes);

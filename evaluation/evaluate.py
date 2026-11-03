@@ -75,6 +75,7 @@ def score(ranked_urls: list[str], relevant: dict[str, int], k: int) -> dict:
         "recall": len(found) / len(relevant),
         "precision": sum(u in relevant for u in top) / k,
         "ndcg": dcg / idcg,
+        "pages": len(set(top)),
     }
 
 
@@ -157,13 +158,14 @@ def main() -> None:
     reachable = [r for r in answerable if indexed & by_id[r["id"]]["relevant"].keys()]
 
     print(f"\nPytania: {len(answerable)} w zakresie, {len(out_of_scope)} spoza zakresu\n")
-    print(f"{'k':>4} {'Hit@k':>8} {'Recall@k':>9} {'Prec@k':>8} {'nDCG@k':>8}   {'Hit@k (odp. w bazie)':>20}")
+    print(f"{'k':>4} {'Hit@k':>8} {'Recall@k':>9} {'Prec@k':>8} {'nDCG@k':>8}   {'Hit@k (odp. w bazie)':>20}"
+          f" {'różnych stron':>14}")
     for k in ks:
         avg = {m: statistics.mean(r["scores"][k][m] for r in answerable)
-               for m in ("hit", "recall", "precision", "ndcg")}
+               for m in ("hit", "recall", "precision", "ndcg", "pages")}
         hit_reachable = statistics.mean(r["scores"][k]["hit"] for r in reachable) if reachable else 0.0
         print(f"{k:>4} {avg['hit']:>8.3f} {avg['recall']:>9.3f} {avg['precision']:>8.3f} {avg['ndcg']:>8.3f}"
-              f"   {hit_reachable:>20.3f}")
+              f"   {hit_reachable:>20.3f} {avg['pages']:>14.2f}")
     print(f"\nMRR@{max_k}: {statistics.mean(r['rr'] for r in answerable):.3f}")
 
     # Odległość kosinusowa najlepszego wyniku — podstawa do dobrania progu odcięcia

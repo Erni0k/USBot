@@ -1,6 +1,7 @@
 """Bot Uniwersytetu Śląskiego — aplikacja terminalowa."""
 import os
 import sys
+from collections import Counter
 from functools import lru_cache
 
 # UTF-8 na Windows (cp1252 nie obsługuje polskich znaków)
@@ -35,6 +36,9 @@ MAX_DISTANCE = float(os.getenv("MAX_DISTANCE", "0.43"))
 # 0 = wyłączone. Wpływ na wyniki: docs/testy.md (6.4).
 OLD_NEWS_PENALTY = float(os.getenv("OLD_NEWS_PENALTY", "0"))
 OLD_NEWS_DAYS = int(os.getenv("OLD_NEWS_DAYS", "730"))
+# Najwyżej tyle fragmentów z jednej strony (URL-a) w wynikach; 0 = bez limitu.
+# Wybór wartości: docs/testy.md (6.4).
+MAX_PER_URL = int(os.getenv("MAX_PER_URL", "2"))
 ENABLE_THINKING = os.getenv("ENABLE_THINKING", "false").lower() == "true"
 
 NO_INFO = "Nie mam tej informacji – sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
@@ -76,25 +80,20 @@ def embed(text: str) -> list[float]:
     return get_embedder().encode(text, normalize_embeddings=True).tolist()
 
 
-def retrieve(question: str, k: int = TOP_K, max_distance: float | None = MAX_DISTANCE,
-             penalty: float = OLD_NEWS_PENALTY) -> list[dict]:
-    """Zwraca do k najbliższych fragmentów; z `max_distance` tylko te nie dalsze niż próg.
+def _candidates(question: str, k: int, penalty: float = OLD_NEWS_PENALTY) -> list[dict]:
+    """Najbliższe fragmenty z zapasem (5·k, min. 40), posortowane według `score`.
 
-    Próg sprawdzamy w Pythonie, nie w SQL: przy indeksie HNSW warunek WHERE na
-    odległość filtruje dopiero kandydatów z indeksu i może zwrócić za mało wyników.
-
-    Z `penalty` > 0 fragmenty starych aktualności/wydarzeń dostają `score` = dist +
-    penalty i według niego są sortowane — pobieramy wtedy więcej kandydatów, żeby
-    było z czego wybierać. Próg nadal dotyczy samej odległości (`dist`).
+    Zapas jest potrzebny, bo _select() pomija duplikaty i nadmiar fragmentów z jednej
+    strony, a kara za stare aktualności zmienia kolejność.
     """
     qvec = embed(question)
-    n = max(4 * k, 40) if penalty else k
+    n = max(5 * k, 40)
     with psycopg.connect(DATABASE_URL) as conn:
         register_vector(conn)
         if n > 40:  # domyślny hnsw.ef_search = 40 to też limit liczby wyników
             conn.execute(f"SET hnsw.ef_search = {int(n)}")
         rows = conn.execute(
-            "SELECT id, url, title, content, page_type, published_at, "
+            "SELECT id, url, title, content, page_type, published_at, body_hash, "
             "       embedding <=> %s::vector AS dist, "
             "       page_type IN ('news', 'event') "
             "         AND published_at < now() - make_interval(days => %s) AS old_news "
@@ -102,9 +101,57 @@ def retrieve(question: str, k: int = TOP_K, max_distance: float | None = MAX_DIS
             (qvec, OLD_NEWS_DAYS, n),
         ).fetchall()
     chunks = [{"id": r[0], "url": r[1], "title": r[2], "content": r[3], "page_type": r[4],
-               "published_at": r[5], "dist": r[6], "score": r[6] + (penalty if r[7] else 0.0)}
+               "published_at": r[5], "body_hash": r[6], "dist": r[7],
+               "score": r[7] + (penalty if r[8] else 0.0)}
               for r in rows]
-    chunks = sorted(chunks, key=lambda c: c["score"])[:k]
+    return sorted(chunks, key=_rank)
+
+
+def _rank(c: dict) -> tuple:
+    """Kolejność wyników: `score`, przy remisie krótszy URL.
+
+    Remisy to kopie tej samej treści (ten sam embedding), np. strona portalu i jej
+    nieprzetłumaczona kopia pod /student/en/ albo /student i /student/pl. _select()
+    zostawia pierwszą kopię — krótszy adres to zwykle oryginał, lepszy do cytowania.
+    """
+    return c["score"], len(c["url"]), c["url"]
+
+
+def _select(chunks: list[dict], k: int, max_per_url: int = MAX_PER_URL) -> list[dict]:
+    """Pierwsze k fragmentów z posortowanej listy, bez powtórzeń treści.
+
+    Ta sama treść (`body_hash` — bez prefiksu z tytułem) z kilku stron zostaje raz,
+    z najbliższego fragmentu. Z `max_per_url` jedna strona dostaje najwyżej tyle
+    miejsc, żeby długa strona nie zajęła całego kontekstu. Zwolnione miejsca
+    zajmują kolejni kandydaci.
+    """
+    seen: set[str] = set()
+    per_url: Counter[str] = Counter()
+    out = []
+    for c in chunks:
+        key = c["body_hash"] or c["content"]
+        if key in seen or (max_per_url and per_url[c["url"]] >= max_per_url):
+            continue
+        seen.add(key)
+        per_url[c["url"]] += 1
+        out.append(c)
+        if len(out) == k:
+            break
+    return out
+
+
+def retrieve(question: str, k: int = TOP_K, max_distance: float | None = MAX_DISTANCE,
+             penalty: float = OLD_NEWS_PENALTY, max_per_url: int = MAX_PER_URL) -> list[dict]:
+    """Zwraca do k najbliższych fragmentów; z `max_distance` tylko te nie dalsze niż próg.
+
+    Próg sprawdzamy w Pythonie, nie w SQL: przy indeksie HNSW warunek WHERE na
+    odległość filtruje dopiero kandydatów z indeksu i może zwrócić za mało wyników.
+
+    Z `penalty` > 0 fragmenty starych aktualności/wydarzeń dostają `score` = dist +
+    penalty i według niego są sortowane. Próg nadal dotyczy samej odległości (`dist`).
+    Duplikaty treści i limit fragmentów z jednej strony: _select().
+    """
+    chunks = _select(_candidates(question, k, penalty), k, max_per_url)
     if max_distance is not None:
         chunks = [c for c in chunks if c["dist"] <= max_distance]
     return chunks
@@ -132,15 +179,16 @@ def retrieve_for_chat(history: list[dict], k: int = TOP_K, max_distance: float =
     Historia ratuje follow-upy ("a wnst?" samo jest daleko od wszystkiego), ale po
     zmianie tematu wcześniejsze pytania psują zapytanie — po "przepis na pierogi"
     pytanie o urlop dziekański z historią byłoby odrzucone, choć samo pasuje dobrze.
-    Każdy fragment dostaje mniejszą z dwóch odległości; próg stosujemy po złączeniu.
+    Każdy fragment dostaje mniejszą z dwóch odległości; duplikaty, limit na stronę
+    (_select) i próg stosujemy po złączeniu.
     """
     last = next(m["content"] for m in reversed(history) if m["role"] == "user")
     best: dict[int, dict] = {}
     for query in dict.fromkeys([build_query(history), last]):
-        for c in retrieve(query, k=k, max_distance=None):
+        for c in _candidates(query, k):
             if c["id"] not in best or c["score"] < best[c["id"]]["score"]:
                 best[c["id"]] = c
-    chunks = sorted(best.values(), key=lambda c: c["score"])[:k]
+    chunks = _select(sorted(best.values(), key=_rank), k)
     return [c for c in chunks if c["dist"] <= max_distance]
 
 
