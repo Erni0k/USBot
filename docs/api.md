@@ -49,7 +49,7 @@ KONTEKST:
 ### Zapytanie wektorowe (retrieval)
 
 ```sql
-SELECT id, url, title, content, page_type, published_at,
+SELECT id, url, title, content, page_type, published_at, body_hash,
        embedding <=> %s::vector AS dist,
        page_type IN ('news', 'event')
          AND published_at < now() - make_interval(days => %s) AS old_news
@@ -58,8 +58,13 @@ ORDER BY dist
 LIMIT %s;
 -- %s[0] = wektor zapytania (lista float, dim=1024)
 -- %s[1] = OLD_NEWS_DAYS (domyślnie 730)
--- %s[2] = TOP_K (domyślnie 8); przy OLD_NEWS_PENALTY > 0: max(4·TOP_K, 40) kandydatów
+-- %s[2] = liczba kandydatów: max(5·TOP_K, 40)
 ```
+
+Z kandydatów zostaje `TOP_K` wyników (`_select()` w `cli.py`): ta sama treść
+(`body_hash`) tylko raz — najbliższy fragment, przy równej odległości ten z krótszym
+URL-em — i najwyżej `MAX_PER_URL` fragmentów z jednej strony. Wyniki pomiaru:
+[Testy](testy.md) (6.4).
 
 Operator `<=>` realizuje wyszukiwanie według odległości kosinusowej. Wyniki
 zwracane są w kolejności rosnącej odległości (najlepsze dopasowanie pierwsze).
@@ -79,19 +84,26 @@ uzasadnienie w [Testy](testy.md) (6.4).
 ### Zapis przy ingestii (per-URL, inkrementalnie)
 
 ```sql
--- podmiana fragmentów zmienionej strony
-DELETE FROM chunks WHERE url = %s;
-INSERT INTO chunks (url, title, page_type, published_at, content, embedding)
-VALUES (%s, %s, %s, %s, %s, %s);
-
--- zapis stanu strony (cache crawlera)
-INSERT INTO pages (url, etag, last_modified, content_hash, links, chunker_version, last_crawled)
-VALUES (%s, %s, %s, %s, %s, %s, now())
+-- zapis stanu strony (cache crawlera) z hashami wszystkich fragmentów
+INSERT INTO pages (url, etag, last_modified, content_hash, links, chunker_version,
+                   chunk_hashes, last_crawled)
+VALUES (%s, %s, %s, %s, %s, %s, %s, now())
 ON CONFLICT (url) DO UPDATE SET ...;
+
+-- cache embeddingów: gotowe wektory dla treści, które już są w bazie
+SELECT DISTINCT ON (content_hash) content_hash, embedding
+FROM chunks WHERE content_hash = ANY(%s);
+
+-- podmiana fragmentów zmienionej strony (bez boilerplate'u)
+DELETE FROM chunks WHERE url = %s;
+INSERT INTO chunks (url, title, page_type, published_at, content, content_hash, body_hash, embedding)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
 ```
 
 `content` każdego fragmentu zaczyna się od prefiksu `<tytuł strony> > <nagłówek
-sekcji>` — z tej treści liczony jest embedding.
+sekcji>` — z tej treści liczony jest embedding. Boilerplate to treść (`body_hash`)
+występująca w `pages.chunk_hashes` więcej niż `BOILERPLATE_URLS` stron; jej
+wcześniejsze kopie są usuwane w tej samej transakcji (opis reguły w README).
 
 ## 3.3 Zmienne środowiskowe (`.env`)
 
@@ -107,6 +119,8 @@ sekcji>` — z tej treści liczony jest embedding.
 | `MAX_DISTANCE` | `0.43` | Maks. odległość kosinusowa fragmentu; gdy żaden się nie mieści, bot odpowiada bez LLM-a |
 | `OLD_NEWS_PENALTY` | `0` | Kara do odległości (tylko przy sortowaniu) dla `news`/`event` starszych niż `OLD_NEWS_DAYS`; `0` = wyłączone |
 | `OLD_NEWS_DAYS` | `730` | Od ilu dni aktualność/wydarzenie jest „stare" |
+| `MAX_PER_URL` | `2` | Najwyżej tyle fragmentów z jednej strony w wynikach; `0` = bez limitu |
+| `BOILERPLATE_URLS` | `20` | Treść fragmentu na większej liczbie stron to boilerplate i nie trafia do bazy; `0` = wyłączone |
 | `ENABLE_THINKING` | `false` | Tryb rozumowania Qwen3 (wolniejszy, dokładniejszy) |
 | `CRAWL_LIMIT` | `6000` | Maks. liczba stron na jeden crawl |
 | `CRAWL_DEPTH` | `3` | Głębokość BFS (0 = tylko sitemap + seedy) |

@@ -62,6 +62,7 @@ faworyzowały ocenianego retrievera. Trafność liczona jest po URL-u.
 | Precision@k | jaka część z k zwróconych fragmentów jest trafna |
 | nDCG@k | jakość kolejności z uwzględnieniem ocen 2/1 (duplikaty strony liczone raz) |
 | MRR | średnia z 1/pozycja pierwszego trafienia |
+| różnych stron | średnia liczba różnych URL-i w top-k (ile stron naprawdę dostaje LLM) |
 
 **Wyniki bazowe** (2026-11-02; bge-m3, chunk 800/120, samo wyszukiwanie wektorowe,
 41 826 fragmentów z 10 053 stron):
@@ -313,6 +314,104 @@ co dostaje LLM.
   jego jedyny trafny fragment w top-8 (`student/studia/obowiazkowe-szkolenia`, pozycja 7)
   ma 0.465 i próg go odcina. Przy obecnej kolejności wyników w 1A to pytanie też nie
   dostawało trafnego fragmentu przed progiem (pozycja 10), więc to nie jest regresja progu.
+
+**Duplikaty treści, boilerplate i limit fragmentów z jednej strony** (2026-11-03; baza jak
+wyżej, 42 397 fragmentów z 12 055 stron, k = `TOP_K` = 8).
+
+Skala — ta sama treść po ujednoliceniu białych znaków:
+
+- **Cała treść fragmentu** (z prefiksem `<tytuł> > <nagłówek>`): 41 431 unikalnych, 820
+  grup z powtórzeniami, 966 nadmiarowych kopii (2,3% fragmentów). 722 grupy występują na
+  więcej niż jednej stronie; 776 URL-i dzieli fragment z inną stroną. Żadna treść nie ma
+  więcej niż 9 URL-i — prefiks z tytułem jest na każdej stronie inny.
+- **Treść bez prefiksu**: 40 814 unikalnych, 1 126 grup, 1 583 nadmiarowe kopie (3,7%);
+  1 036 grup na więcej niż jednej stronie, 1 182 URL-e dzielące fragment. Na ponad 5
+  stronach: 42 treści, ponad 10: 3, ponad 20: 2.
+- 138 par stron ma co najmniej 3 identyczne fragmenty — to ta sama strona pod dwoma
+  adresami: nieprzetłumaczone kopie pod `/student/en/` (do 19 wspólnych fragmentów),
+  `/student` i `/student/pl`, aktualność i jej kopia z `-2` w adresie.
+- „Kontakt dla mediów” jest w jednym fragmencie (`/kontakt`) — stopkę aktualności usuwa
+  już ekstrakcja.
+
+10 najczęstszych treści (bez prefiksu):
+
+| Stron | Fragmentów | Treść |
+|---|---|---|
+| 36 | 36 | „Dostępność architektoniczna:” — sam nagłówek bez treści (deklaracje dostępności budynków) |
+| 31 | 31 | „Drukuj stronę Udostępnij na Facebook…” — przyciski pod wydarzeniami i aktualnościami |
+| 13 | 13 | „Sfinansowane ze środków UE. Wyrażone poglądy…” — stopka projektu (cykl „Tydzień … w Mieście Nauki”) |
+| 9 | 9 | „Funded by the European Union. Views and opinions…” — to samo po angielsku |
+| 9 | 9 | „Zabierz ze sobą – naczynia, sztućce…” — akademiki (8 domów studenta + kopia `/en/`) |
+| 9 | 9 | „Informacje dodatkowe. Zwierzęta: za zgodą administratora…” — akademiki |
+| 9 | 9 | „Ogólne – zakaz palenia papierosów” — akademiki |
+| 9 | 9 | „Electro-Intrusion. Simultaneous transformation…” — opis projektu w 9 komunikatach |
+| 9 | 9 | „Greenhouse gas emissions, pollution…” — ten sam opis, kolejny fragment |
+| 9 | 9 | „teams specializing in physics, chemistry…” — ten sam opis, kolejny fragment |
+
+W top-8 pytań w zakresie kopie tej samej treści zajmowały 7 miejsc (4 z 48 pytań).
+Większym problemem jest koncentracja: średnio tylko 5,5 różnej strony w top-8, w 12
+pytaniach jedna strona zajmowała co najmniej 4 z 8 miejsc, w 3 pytaniach — 7.
+
+Zmiany (opis w README):
+
+- `chunks.content_hash` (cała treść, z której liczony jest embedding) — cache
+  embeddingów przy ingestii; `chunks.body_hash` (bez prefiksu) — ten sam tekst na
+  różnych stronach. Migracja w `_ensure_schema()` uzupełniła hashe istniejących fragmentów.
+- Boilerplate: treść na więcej niż `BOILERPLATE_URLS` = 20 stronach nie trafia do bazy.
+  Usunięto 67 fragmentów (dwie pierwsze pozycje tabeli).
+- `retrieve()`: ta sama treść (`body_hash`) zostaje raz — najbliższy fragment; jedna
+  strona zajmuje najwyżej `MAX_PER_URL` miejsc; zwolnione miejsca zajmują kolejni
+  kandydaci (pobieranych jest 5·k, min. 40), więc nadal jest `TOP_K` wyników. To samo
+  w `retrieve_for_chat()` po złączeniu obu zapytań.
+
+Wyniki (etykiet nie zmieniano; „przed” = stan po chunkingu z prefiksem, tabela wyżej):
+
+| Wariant | Hit@1 | Hit@3 | Hit@8 | Hit@10 | nDCG@8 | nDCG@10 | Recall@8 | Recall@10 | MRR@10 | Różnych stron w top-8 | Kopie w top-8 | Bez trafienia w top-10 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| przed | 0.542 | 0.729 | 0.854 | 0.854 | 0.511 | 0.513 | 0.568 | 0.580 | 0.643 | 5.52 | 7 | 7 |
+| bez duplikatów, bez limitu | 0.542 | 0.729 | 0.854 | 0.875 | 0.512 | 0.517 | 0.568 | 0.585 | 0.645 | 5.54 | 0 | 6 |
+| + `MAX_PER_URL` = 3 | 0.542 | 0.729 | 0.854 | 0.875 | 0.514 | 0.525 | 0.575 | 0.611 | 0.645 | 5.85 | 0 | 6 |
+| **+ `MAX_PER_URL` = 2** (włączone) | 0.542 | **0.750** | 0.854 | **0.896** | 0.525 | 0.541 | 0.599 | 0.632 | 0.649 | 6.35 | 0 | 5 |
+| + `MAX_PER_URL` = 1 | 0.542 | **0.750** | **0.896** | **0.896** | **0.556** | **0.571** | **0.627** | **0.679** | **0.662** | 8.00 | 0 | 5 |
+
+Hit@5 = 0.812 we wszystkich wariantach. Wariant `MAX_PER_URL` = 3 zmierzono przed
+usunięciem boilerplate'u; dla pozostałych wyniki przed i po usunięciu są identyczne
+(żadne top-10 się nie zmieniło — usunięte fragmenty nie trafiały do wyników pytań testowych).
+
+- **Duplikaty nie zajmują już miejsc w top-k** (0 kopii we wszystkich wariantach). Na
+  metryki wpływa to mało, bo kopii było niewiele: `erasmus` wchodzi na pozycję 10.
+- **Remisy.** Pierwszy pomiar bez duplikatów dał Hit@1 0.521 (−1 pytanie):
+  w `egzamin-komisyjny` oryginał z portalu studenta i jego kopia pod `/student/en/` mają
+  identyczną treść i odległość (0.3793), a deduplikacja zostawiła przypadkiem kopię
+  `/en/`. Teraz przy równej odległości wygrywa krótszy URL — zwykle oryginał, i to jego
+  adres powinien cytować LLM. Bez zmian etykiet wynik wraca do 0.542.
+- **Limit 2 na stronę:** Hit@10 0.854 → 0.896 (`haslo-konto` z poza top-10 na 9,
+  `erasmus` na 10), nDCG@8 +0.014, Recall@8 +0.031, różnych stron w top-8 5.5 → 6.4.
+  Hit@8 bez zmian. Żadne pytanie nie pogorszyło się w żadnym wariancie (pozycja
+  pierwszego trafienia w top-10).
+- **Dlaczego 2, a nie 1.** Limit 1 wygrywa we wszystkich metrykach (Hit@8 +0.04, MRR
+  0.662; dodatkowo `thunderbird` 4 → 2, `stypendium-rektora` i `stypendium-socjalne`
+  3 → 2, `alarm` 5 → 4). Ale trafność liczymy po URL-u, więc metryki z definicji
+  nagradzają różne strony i nie widzą, że odpowiedź bywa w drugim fragmencie tej samej
+  strony (np. godziny i kontakt dziekanatu w osobnych sekcjach). Limit 1 to kandydat,
+  gdy będzie ewaluacja samych odpowiedzi; 3 prawie nic nie zmienia względem braku limitu.
+- **Boilerplate.** Próg 20 łapie tylko przyciski „Udostępnij” i pusty nagłówek. Kolejna
+  treść ma 13 stron (stopka UE) — to też boilerplate, ale zostaje; próg 10 dodałby tylko
+  ją. Regulamin akademików (9 stron) jest merytoryczny i musi zostać, stąd zapas.
+- **Cache embeddingów** sprawdzony testem `_flush()` w transakcji z rollbackiem: strona
+  z 3 fragmentami + 1 nowy → 1 embedding policzony, 2 z cache'u (wektory identyczne
+  z zapisanymi), 1 boilerplate pominięty, a jego 31 kopii z innych stron usuniętych.
+  Przy ingestii od zera cache oszczędza ok. 970 embeddingów (kopie całej treści, 2,3%);
+  główny zysk to edytowane strony — liczone są tylko zmienione sekcje. Pełnego przebiegu
+  ingestii po zmianie nie uruchamiano.
+- **Próg `MAX_DISTANCE` bez zmian (0.43).** Odległości top-1 te same co wyżej; przy 0.43
+  odrzucone 0/48 pytań w zakresie i 8/18 spoza zakresu, utracone trafienia: 1 (nadal
+  `szkolenia-obowiazkowe`).
+- **Uwaga do T12.** Follow-up „a wnst?” po pytaniu o dziekanat WH nie zwraca w top-8
+  dziekanatu WNST — ani przed tą zmianą, ani po niej; zapytanie z historią jest
+  zdominowane przez WH. Po zmianie zamiast 5 fragmentów jednej strony
+  `/student/en/…/dziekanat-wydzialu-humanistycznego/contact` są 2 i trzy inne strony.
+  Do zbadania osobno.
 
 !!! warning "Status"
     Katalog `tests/` jest **planowany** — testy zostaną zaimplementowane w kolejnych

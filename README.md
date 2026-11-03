@@ -139,6 +139,37 @@ których pochodzą nazwy pod-sitemap), co działa też dla stron spoza sitemapy,
 komunikatów portalu studenta. Nowe kolumny dodaje migracja w `_ensure_schema()` —
 `init.sql` wykonuje się tylko przy pierwszym starcie kontenera.
 
+**Hashe fragmentów i cache embeddingów.** Każdy fragment ma dwa hashe SHA-256 liczone po
+ujednoliceniu białych znaków: `content_hash` — całej treści z prefiksem, czyli tekstu,
+z którego liczony jest embedding, i `body_hash` — samej treści bez prefiksu. Przed
+liczeniem embeddingów ingestia szuka `content_hash` w `chunks`: gdy taki tekst już jest
+(ta sama treść na innej stronie albo niezmieniona sekcja edytowanej strony), bierze
+gotowy embedding zamiast liczyć go ponownie; w paczce stron każdy tekst jest embedowany
+raz. Podsumowanie przebiegu podaje, ile embeddingów policzono, ile wzięto z cache'u i
+ile fragmentów pominięto jako boilerplate. Migracja w `_ensure_schema()` uzupełnia hashe
+fragmentów zapisanych wcześniej.
+
+**Boilerplate.** Fragment, którego treść (`body_hash`, bez prefiksu — prefiks z tytułem
+jest na każdej stronie inny) występuje na **więcej niż `BOILERPLATE_URLS` (20) stronach**,
+uznawany jest za boilerplate i nie trafia do `chunks`. Dziś są to dwa teksty na 67
+fragmentach: przyciski „Drukuj stronę Udostępnij na Facebook…” pod aktualnościami
+(31 stron) i sam nagłówek „Dostępność architektoniczna:” bez treści (36 stron deklaracji
+dostępności). Próg 20 zostawia z zapasem treść wspólną dla kilku stron, która jest
+merytoryczna: regulamin akademików powtarzający się na 9 stronach domów studenta.
+
+- Liczy się liczba różnych stron, nie fragmentów. Ingestia trzyma w `pages.chunk_hashes`
+  hashe **wszystkich** fragmentów strony, także pominiętych — licząc po `chunks`, licznik
+  po wykluczeniu spadłby do zera i kolejna strona zapisałaby tekst z powrotem.
+- Gdy tekst przekroczy próg w trakcie ingestii (np. 21. strona z tym samym akapitem),
+  jego wcześniejsze kopie są usuwane z `chunks` w tej samej transakcji. Przy starcie
+  ingestia usuwa też boilerplate według bieżącego progu (np. po jego obniżeniu).
+- Reguła działa na całych fragmentach: wspólny akapit, który splitter skleił z inną
+  treścią, nie zostanie rozpoznany. W `retrieve()` ten sam tekst z kilku stron zostaje
+  dodatkowo tylko raz (patrz niżej).
+- Tekst, który spadnie poniżej progu (strony go usunęły), wraca do `chunks` dopiero
+  przy ponownym embedowaniu pozostałych stron, np. po `CRAWL_FRESH=true`.
+- `BOILERPLATE_URLS=0` wyłącza regułę.
+
 **Kolejność i filtrowanie:**
 
 - Najpierw crawlowana jest **kolejka priorytetowa**: seedy (`FALLBACK_URLS` w
@@ -218,6 +249,8 @@ Format jednej linii `queries.jsonl`:
 | `MAX_DISTANCE` | maks. odległość kosinusowa fragmentu; gdy żaden się nie mieści, bot odpowiada „Nie mam tej informacji…" bez wywołania LLM-a | `0.43` |
 | `OLD_NEWS_PENALTY` | kara dodawana do odległości (tylko przy sortowaniu) dla aktualności i wydarzeń starszych niż `OLD_NEWS_DAYS`; `0` = wyłączone | `0` |
 | `OLD_NEWS_DAYS` | od ilu dni aktualność/wydarzenie jest „stare" | `730` |
+| `MAX_PER_URL` | najwyżej tyle fragmentów z jednej strony w wynikach `retrieve()`; `0` = bez limitu | `2` |
+| `BOILERPLATE_URLS` | fragment o tej samej treści na więcej stronach to boilerplate i nie trafia do bazy; `0` = wyłączone | `20` |
 | `ENABLE_THINKING` | tryb rozumowania Qwen3 (wolniejszy) | `false` |
 | `CRAWL_LIMIT` | maks. liczba stron na jeden crawl | `6000` |
 | `CRAWL_DEPTH` | głębokość BFS (0 = tylko sitemap + seedy) | `3` |
@@ -233,6 +266,12 @@ Format jednej linii `queries.jsonl`:
   follow-upy („a wnst?", „dziekanatu tam") trafiają we właściwy kontekst. Równolegle
   szuka samym ostatnim pytaniem i łączy wyniki — po zmianie tematu wcześniejsze
   pytania nie psują wyszukiwania.
+- W wynikach wyszukiwania **ta sama treść występuje raz** (po `body_hash`, zostaje
+  najbliższy fragment; przy remisie — krótszy URL, czyli zwykle oryginał, a nie kopia
+  pod `/student/en/`), a jedna strona zajmuje najwyżej `MAX_PER_URL` (2) miejsc.
+  Zwolnione miejsca zajmują kolejni kandydaci, więc nadal jest `TOP_K` wyników.
+  Po aktualizacji kodu uruchom raz ingestię — migracja dodaje kolumny, z których
+  korzysta `cli.py`.
 - Gdy żaden fragment nie jest bliżej niż `MAX_DISTANCE`, bot od razu odpowiada
   „Nie mam tej informacji – sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
   i nie woła modelu — zamiast dawać mu niepasujący kontekst, na którym zmyśla. Próg

@@ -66,12 +66,15 @@ aktualizacji inkrementalnej).
 | `page_type` | `TEXT` | | Typ strony: `student`, `wydzial`, `static`, `news`, `event` |
 | `published_at` | `TIMESTAMPTZ` | | Data publikacji (`article:published_time`, `<time>` lub data z treści) |
 | `content` | `TEXT` | NOT NULL | Treść fragmentu z prefiksem `<tytuł strony> > <nagłówek sekcji>` |
+| `content_hash` | `TEXT` | | SHA-256 `content` po ujednoliceniu białych znaków; klucz cache'u embeddingów |
+| `body_hash` | `TEXT` | | To samo bez prefiksu; ta sama treść na różnych stronach (boilerplate, duplikaty w wynikach) |
 | `embedding` | `VECTOR(1024)` | NOT NULL | Wektor embeddingu (`BAAI/bge-m3`) |
 | `created_at` | `TIMESTAMPTZ` | DEFAULT now() | Data dodania rekordu |
 
 Indeksy: `chunks_embedding_idx` (HNSW, `vector_cosine_ops`) pod wyszukiwanie
-kosinusowe oraz `chunks_url_idx` (po kolumnie `url`) pod szybką aktualizację
-fragmentów danej strony przy re-crawlu.
+kosinusowe, `chunks_url_idx` (po kolumnie `url`) pod szybką aktualizację
+fragmentów danej strony przy re-crawlu oraz `chunks_content_hash_idx` i
+`chunks_body_hash_idx` (cache embeddingów, usuwanie boilerplate'u).
 
 ### Tabela: `pages`
 
@@ -83,6 +86,7 @@ fragmentów danej strony przy re-crawlu.
 | `content_hash` | `TEXT` | | SHA-256 wyekstrahowanego tekstu i metadanych strony |
 | `links` | `JSONB` | | Linki znalezione na stronie (do BFS przy 304) |
 | `chunker_version` | `INT` | | `CHUNKER_VERSION`, którą podzielono stronę; inna wymusza ponowny podział i embedding |
+| `chunk_hashes` | `TEXT[]` | | `body_hash` wszystkich fragmentów strony, także pominiętych jako boilerplate (indeks GIN `pages_chunk_hashes_idx`) |
 | `last_crawled` | `TIMESTAMPTZ` | DEFAULT now() | Data ostatniego odwiedzenia |
 
 **Relacje:** tabele nie mają kluczy obcych; powiązane są logicznie przez kolumnę
@@ -90,9 +94,10 @@ fragmentów danej strony przy re-crawlu.
 na kolumnie `embedding` przy użyciu operatora `<=>` (pgvector). Parametr `TOP_K`
 (domyślnie 8) steruje liczbą zwracanych fragmentów.
 
-Kolumny `page_type`, `published_at` i `chunker_version` dodaje migracja w
-`_ensure_schema()` (`ingestion/ingest.py`, `ALTER TABLE … ADD COLUMN IF NOT EXISTS`) —
-`infra/init.sql` wykonuje się tylko przy pierwszym starcie kontenera.
+Kolumny `page_type`, `published_at`, `content_hash`, `body_hash`, `chunker_version` i
+`chunk_hashes` dodaje migracja w `_ensure_schema()` (`ingestion/ingest.py`, `ALTER TABLE
+… ADD COLUMN IF NOT EXISTS`; hashe istniejących fragmentów uzupełnia przy pierwszym
+uruchomieniu) — `infra/init.sql` wykonuje się tylko przy pierwszym starcie kontenera.
 
 ## 1.5 Makiety UI
 

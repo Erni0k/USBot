@@ -137,8 +137,10 @@ Tworzy on:
 - tabelę `pages` (stan crawlera).
 
 `init.sql` nie wykona się ponownie na istniejącym wolumenie, dlatego kolumny dodane
-później (`chunks.page_type`, `chunks.published_at`, `pages.chunker_version`) dokłada
-migracja w `_ensure_schema()` przy każdym starcie `ingestion/ingest.py`.
+później (`chunks.page_type`, `chunks.published_at`, `chunks.content_hash`,
+`chunks.body_hash`, `pages.chunker_version`, `pages.chunk_hashes`) dokłada migracja w
+`_ensure_schema()` przy każdym starcie `ingestion/ingest.py`. `cli.py` korzysta z
+`body_hash`, więc po aktualizacji kodu uruchom ingestię przed botem.
 
 !!! info "Port bazy danych: 5433"
     Baza mapowana jest na port **5433** (`5433:5432` w `docker-compose.yml`), aby
