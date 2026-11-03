@@ -18,6 +18,9 @@ Użytkownik (terminal)
    │  retrieve()     ──► PostgreSQL + pgvector (operator <=>)│
    │    [hybrid]     ──► + FTS (content_tsv @@), fuzja RRF  │
    │  _select()      ──► TOP_K bez duplikatów, ≤2 na stronę │
+   │    [RERANK]     ──► 20 kandydatów → CrossEncoder       │
+   │                     (bge-reranker-v2-m3) → TOP_K       │
+   │  _cutoff()      ──► próg MAX_DISTANCE/MIN_RERANK_SCORE │
    │  build_context()──► string z TOP_K fragmentów          │
    │  LLM API call   ──► Ollama / vLLM (Qwen3, streaming)    │
    ▼                                                        │
@@ -111,6 +114,7 @@ pliki binarne (PDF, obrazy, archiwa, dokumenty Office, audio/wideo).
 | pgvector | rozszerzenie PostgreSQL | Przechowywanie i wyszukiwanie wektorów |
 | unaccent + FTS | rozszerzenie i wbudowane wyszukiwanie PostgreSQL | Wyszukiwanie pełnotekstowe (`tsvector`, GIN) w trybie `hybrid` |
 | BAAI/bge-m3 | ~2 GB, sentence-transformers | Model embeddingów wielojęzycznych (1024 dim) |
+| BAAI/bge-reranker-v2-m3 | ~2.3 GB, sentence-transformers `CrossEncoder`, fp16 na GPU | Opcjonalny reranking kandydatów (`RERANK=true`) |
 | Qwen3 | domyślnie `qwen3:8b` | Model językowy (LLM) generujący odpowiedzi |
 | Ollama | zalecane | Lokalny serwer modelu z API zgodnym z OpenAI |
 | vLLM | ≥ 0.9.0, wymaga GPU NVIDIA | Alternatywny serwer modelu dla środowisk z GPU |
@@ -121,7 +125,7 @@ pliki binarne (PDF, obrazy, archiwa, dokumenty Office, audio/wideo).
 | Pakiet | Rola |
 |---|---|
 | `openai` | Klient HTTP do API modelu językowego |
-| `sentence-transformers` | Generowanie embeddingów (`BAAI/bge-m3`) |
+| `sentence-transformers` | Generowanie embeddingów (`BAAI/bge-m3`) i reranking (`CrossEncoder`, `BAAI/bge-reranker-v2-m3`) |
 | `psycopg[binary]` | Sterownik PostgreSQL dla Pythona |
 | `pgvector` | Integracja typu `vector` z psycopg |
 | `langchain-text-splitters` | Dzielenie tekstu na fragmenty (chunking) |

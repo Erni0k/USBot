@@ -28,7 +28,7 @@ us-chatbot/
 │   ├── ingest.py       # pipeline: crawl → chunking → embeddingi (cache) → pgvector
 │   └── scrape.py       # inkrementalny crawler BFS (stały pool żądań, limit na domenę)
 ├── evaluation/
-│   ├── evaluate.py     # metryki retrievalu: Hit/Recall/Precision/nDCG@k, MRR, dobór progu
+│   ├── evaluate.py     # metryki retrievalu: Hit/Recall/Precision/nDCG@k, MRR, dobór progu (odległość / reranker)
 │   └── queries.jsonl   # pytania testowe z oznaczonymi URL-ami
 ├── infra/              # init.sql (pgvector, unaccent, tabele chunks i pages)
 ├── docker-compose.yml  # baza Postgres + opcjonalnie vLLM
@@ -86,6 +86,15 @@ LLM_MODEL=qwen3
 Model embeddingów (`BAAI/bge-m3`, ~2 GB) pobiera się automatycznie z Hugging Face
 przy pierwszym uruchomieniu. Potem aplikacja działa offline (`HF_HUB_OFFLINE=1`
 ustawiane automatycznie) — by wymusić ponowne pobranie ustaw `HF_HUB_OFFLINE=0`.
+
+Opcjonalny reranker (`RERANK=true`, model `BAAI/bge-reranker-v2-m3`, ~2.3 GB) pobierz
+raz przed pierwszym użyciem — w trybie offline `cli.py` go nie ściągnie:
+
+```bash
+HF_HUB_OFFLINE=0 python -c "from sentence_transformers import CrossEncoder; CrossEncoder('BAAI/bge-reranker-v2-m3')"
+```
+
+Reranker ma sens na GPU (PyTorch z CUDA): 20 par ocenia w ~90 ms, na CPU w ~6 s.
 
 ## 3. Baza danych
 

@@ -12,11 +12,19 @@
 | Git | 2+ | Klonowanie repozytorium |
 | ~2 GB miejsca | — | Model embeddingów `BAAI/bge-m3` |
 | ~5 GB miejsca | — | Model LLM `qwen3:8b` (Ollama) |
+| ~2.3 GB miejsca (opcjonalnie) | — | Reranker `BAAI/bge-reranker-v2-m3` (`RERANK=true`) |
 
 !!! note "Bez GPU lub z GPU"
     Ollama działa też na CPU, ale model `qwen3:8b` jest wtedy wolny — rozważ
     `qwen3:4b` lub `qwen3:1.7b`. Z kartą NVIDIA odpowiedzi są szybkie.
     Alternatywą jest vLLM (wymaga `nvidia-container-toolkit`).
+
+!!! note "Reranking (opcjonalnie, `RERANK=true`)"
+    Reranker wymaga PyTorch z CUDA: na RTX 3080 ocena 20 fragmentów trwa ~90 ms (fp16),
+    na CPU ~6 s na pytanie. Model pobierz raz, bo `cli.py` działa offline:
+    `HF_HUB_OFFLINE=0 python -c "from sentence_transformers import CrossEncoder; CrossEncoder('BAAI/bge-reranker-v2-m3')"`.
+    Przy `RERANK=true` próg odcięcia to `MIN_RERANK_SCORE` (domyślnie 0.01), a
+    `MAX_DISTANCE` nie działa. Szczegóły: [Testy](testy.md) (6.4).
 
 ## 4.2 Instalacja i uruchomienie
 

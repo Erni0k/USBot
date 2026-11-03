@@ -41,6 +41,7 @@ Każda funkcja opisana jest w formacie *User Story*:
 |---|---|---|
 | Wydajność | Czas odpowiedzi modelu (Ollama, GPU) | < 10 s dla typowego pytania |
 | Wydajność | Czas pierwszego uruchomienia (pobranie `BAAI/bge-m3`) | Jednorazowo ~5 min (~2 GB) |
+| Wydajność | Reranking (opcjonalny, `RERANK=true`) | ~90 ms na pytanie na GPU (20 fragmentów, fp16); na CPU ~6 s — tylko z GPU |
 | Wydajność | Crawl inkrementalny — kolejne przebiegi | Pobiera tylko zmienione strony |
 | Bezpieczeństwo | Klucze i hasła | Wyłącznie w `.env` (nie trafia do gita) |
 | Bezpieczeństwo | Zakres odpowiedzi | Bot odpowiada wyłącznie na podstawie pobranego kontekstu |
@@ -96,6 +97,8 @@ fragmentów danej strony przy re-crawlu oraz `chunks_content_hash_idx` i
 na kolumnie `embedding` przy użyciu operatora `<=>` (pgvector). Parametr `TOP_K`
 (domyślnie 8) steruje liczbą zwracanych fragmentów. W trybie `hybrid` dochodzi
 zapytanie pełnotekstowe na `content_tsv`, a wyniki obu łączy Reciprocal Rank Fusion.
+Z `RERANK=true` 20 najlepszych fragmentów ocenia poza bazą cross-encoder
+(`BAAI/bge-reranker-v2-m3`) i zostaje `TOP_K` z najwyższym wynikiem.
 
 Kolumny `page_type`, `published_at`, `content_hash`, `body_hash`, `content_tsv`,
 `chunker_version` i `chunk_hashes` (wraz z rozszerzeniem `unaccent` i funkcją

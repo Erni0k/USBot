@@ -38,6 +38,13 @@
   fragmentów na stronę dały 6,4 strony w top-8 i Hit@10 0,854 → 0,896. Deduplikacja
   wymagała rozstrzygania remisów — identyczne kopie mają tę samą odległość i bez reguły
   (krótszy URL wygrywa) zostawała przypadkowa kopia `/en/`.
+- **Próg odcięcia na właściwej skali** — próg odległości wektorowej (`MAX_DISTANCE`)
+  odrzucał pytania ze skrótami („Gdzie jest dziekanat WNŚiT?”), bo rozkłady odległości
+  pytań w zakresie i spoza niego nakładają się. Reranker ocenia parę (pytanie, fragment)
+  i jego wynik rozdziela je lepiej: przy progu 0.01 żadne pytanie w zakresie nie jest
+  odrzucane (było 2 z 56), a pytań spoza zakresu odrzuconych jest 10 z 18 (było 8).
+  Pytań o inne uczelnie nie rozdziela żaden próg — reranker ocenia temat, nie uczelnię.
+  Reranker na CPU jest za wolny (~6 s), stąd fp16 na GPU (~90 ms) i domyślnie wyłączony.
 - **Port bazy danych** — domyślny port PostgreSQL (5432) bywał zajęty przez lokalne
   instalacje, stąd mapowanie na 5433 w `docker-compose.yml`.
 - **Filtrowanie odpowiedzi** — zapewnienie, że bot nie odpowiada spoza kontekstu,
@@ -85,7 +92,7 @@
   oznaczonymi stronami (w tym 8 ze skrótami i nazwami własnymi) + 18 spoza zakresu; Hit/Recall/Precision/nDCG@k, MRR, raport pokrycia
   bazy, dobór progu. Wynik bazowy 1a: Hit@10 0,917, MRR 0,630; po chunkingu z
   prefiksem: Hit@1 0,542, MRR 0,643; po deduplikacji i limicie na stronę: Hit@10 0,896,
-  MRR 0,649 (patrz [Testy](testy.md)).
+  MRR 0,649; z rerankingiem (56 pytań): Hit@8 po progu 0,804 → 0,893 (patrz [Testy](testy.md)).
 - Crawl wielu domen: `us.edu.pl`, `usnet.us.edu.pl`, `eduroam.us.edu.pl`.
 - **Dopytywanie o dziekanat** — przy pytaniu bez wskazania wydziału bot prosi o
   doprecyzowanie zamiast zgadywać.
