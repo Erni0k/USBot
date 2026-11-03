@@ -49,16 +49,27 @@ KONTEKST:
 ### Zapytanie wektorowe (retrieval)
 
 ```sql
-SELECT url, title, content
+SELECT id, url, title, content, page_type, published_at,
+       embedding <=> %s::vector AS dist,
+       page_type IN ('news', 'event')
+         AND published_at < now() - make_interval(days => %s) AS old_news
 FROM chunks
-ORDER BY embedding <=> %s::vector
+ORDER BY dist
 LIMIT %s;
 -- %s[0] = wektor zapytania (lista float, dim=1024)
--- %s[1] = TOP_K (domyślnie 8)
+-- %s[1] = OLD_NEWS_DAYS (domyślnie 730)
+-- %s[2] = TOP_K (domyślnie 8); przy OLD_NEWS_PENALTY > 0: max(4·TOP_K, 40) kandydatów
 ```
 
 Operator `<=>` realizuje wyszukiwanie według odległości kosinusowej. Wyniki
 zwracane są w kolejności rosnącej odległości (najlepsze dopasowanie pierwsze).
+Fragmenty dalsze niż `MAX_DISTANCE` są odrzucane w Pythonie (przy indeksie HNSW
+warunek `WHERE` na odległość mógłby zwrócić za mało wyników).
+
+Przy `OLD_NEWS_PENALTY > 0` fragmenty starych aktualności i wydarzeń (`old_news`)
+dostają przy sortowaniu `dist + OLD_NEWS_PENALTY` i z kandydatów zostaje `TOP_K`
+najlepszych. Próg nadal dotyczy samej odległości. Domyślnie kara jest wyłączona —
+uzasadnienie w [Testy](testy.md) (6.4).
 
 !!! tip "Retrieval z kontekstem rozmowy"
     Zapytanie nie jest budowane z samego ostatniego komunikatu — funkcja
@@ -70,13 +81,17 @@ zwracane są w kolejności rosnącej odległości (najlepsze dopasowanie pierwsz
 ```sql
 -- podmiana fragmentów zmienionej strony
 DELETE FROM chunks WHERE url = %s;
-INSERT INTO chunks (url, content, embedding) VALUES (%s, %s, %s);
+INSERT INTO chunks (url, title, page_type, published_at, content, embedding)
+VALUES (%s, %s, %s, %s, %s, %s);
 
 -- zapis stanu strony (cache crawlera)
-INSERT INTO pages (url, etag, last_modified, content_hash, links, last_crawled)
-VALUES (%s, %s, %s, %s, %s, now())
+INSERT INTO pages (url, etag, last_modified, content_hash, links, chunker_version, last_crawled)
+VALUES (%s, %s, %s, %s, %s, %s, now())
 ON CONFLICT (url) DO UPDATE SET ...;
 ```
+
+`content` każdego fragmentu zaczyna się od prefiksu `<tytuł strony> > <nagłówek
+sekcji>` — z tej treści liczony jest embedding.
 
 ## 3.3 Zmienne środowiskowe (`.env`)
 
@@ -89,6 +104,9 @@ ON CONFLICT (url) DO UPDATE SET ...;
 | `EMBED_MODEL` | `BAAI/bge-m3` | Model embeddingów (Hugging Face) |
 | `EMBED_DIM` | `1024` | Wymiar wektora embeddingu |
 | `TOP_K` | `8` | Liczba fragmentów z bazy przekazywanych do LLM |
+| `MAX_DISTANCE` | `0.43` | Maks. odległość kosinusowa fragmentu; gdy żaden się nie mieści, bot odpowiada bez LLM-a |
+| `OLD_NEWS_PENALTY` | `0` | Kara do odległości (tylko przy sortowaniu) dla `news`/`event` starszych niż `OLD_NEWS_DAYS`; `0` = wyłączone |
+| `OLD_NEWS_DAYS` | `730` | Od ilu dni aktualność/wydarzenie jest „stare" |
 | `ENABLE_THINKING` | `false` | Tryb rozumowania Qwen3 (wolniejszy, dokładniejszy) |
 | `CRAWL_LIMIT` | `6000` | Maks. liczba stron na jeden crawl |
 | `CRAWL_DEPTH` | `3` | Głębokość BFS (0 = tylko sitemap + seedy) |

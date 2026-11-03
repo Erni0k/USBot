@@ -113,6 +113,15 @@ i baza są w tym czasie w większości bezczynne. Log warto zapisać do pliku
 CRAWL_REFETCH=true CRAWL_LIMIT=12000 python ingestion/ingest.py > ingest-refetch.log 2>&1
 ```
 
+**Po zmianie chunkingu** (`_sections()` / `_chunks()` w `ingest.py`, rozmiar fragmentów,
+prefiks) podbij stałą `CHUNKER_VERSION` w `ingestion/ingest.py`. Inny podział nie zmienia
+tekstu strony, więc hash zostaje ten sam i `CRAWL_REFETCH` nie przeliczyłby embeddingów.
+Wersja podziału jest zapisana w `pages.chunker_version`; przy starcie ingestia pobiera
+(bez 304) i embeduje od nowa wszystkie strony z inną wersją — wystarczy zwykłe
+`python ingestion/ingest.py`. Strony, do których przebieg nie dojdzie przed
+`CRAWL_LIMIT`, zostaną przeliczone w kolejnym przebiegu. Pełne przeliczenie bazy
+(~12 tys. stron) trwa, jak `CRAWL_REFETCH`, ok. 1,5 h.
+
 Zachowanie crawlera dostroisz w `.env`: `CRAWL_LIMIT`, `CRAWL_DEPTH`,
 `CRAWL_WORKERS`, `EMBED_BATCH` (patrz [Dokumentacja API](api.md)).
 Uruchamiaj okresowo (np. cron raz dziennie), gdy treści na stronie się zmieniają.
@@ -126,6 +135,10 @@ Tworzy on:
 - rozszerzenie pgvector (`CREATE EXTENSION IF NOT EXISTS vector`),
 - tabelę `chunks` z indeksami `chunks_embedding_idx` (HNSW) i `chunks_url_idx`,
 - tabelę `pages` (stan crawlera).
+
+`init.sql` nie wykona się ponownie na istniejącym wolumenie, dlatego kolumny dodane
+później (`chunks.page_type`, `chunks.published_at`, `pages.chunker_version`) dokłada
+migracja w `_ensure_schema()` przy każdym starcie `ingestion/ingest.py`.
 
 !!! info "Port bazy danych: 5433"
     Baza mapowana jest na port **5433** (`5433:5432` w `docker-compose.yml`), aby

@@ -62,8 +62,10 @@ aktualizacji inkrementalnej).
 |---|---|---|---|
 | `id` | `BIGSERIAL` | PRIMARY KEY | Unikalny identyfikator fragmentu |
 | `url` | `TEXT` | NOT NULL | Adres strony źródłowej |
-| `title` | `TEXT` | | Tytuł strony lub sekcji |
-| `content` | `TEXT` | NOT NULL | Treść fragmentu tekstowego |
+| `title` | `TEXT` | | Tytuł strony (`<title>` bez „\| Uniwersytet Śląski w Katowicach") |
+| `page_type` | `TEXT` | | Typ strony: `student`, `wydzial`, `static`, `news`, `event` |
+| `published_at` | `TIMESTAMPTZ` | | Data publikacji (`article:published_time`, `<time>` lub data z treści) |
+| `content` | `TEXT` | NOT NULL | Treść fragmentu z prefiksem `<tytuł strony> > <nagłówek sekcji>` |
 | `embedding` | `VECTOR(1024)` | NOT NULL | Wektor embeddingu (`BAAI/bge-m3`) |
 | `created_at` | `TIMESTAMPTZ` | DEFAULT now() | Data dodania rekordu |
 
@@ -78,14 +80,19 @@ fragmentów danej strony przy re-crawlu.
 | `url` | `TEXT` | PRIMARY KEY | Adres strony |
 | `etag` | `TEXT` | | Nagłówek `ETag` z ostatniego pobrania |
 | `last_modified` | `TEXT` | | Nagłówek `Last-Modified` z ostatniego pobrania |
-| `content_hash` | `TEXT` | | SHA-256 wyekstrahowanego tekstu |
+| `content_hash` | `TEXT` | | SHA-256 wyekstrahowanego tekstu i metadanych strony |
 | `links` | `JSONB` | | Linki znalezione na stronie (do BFS przy 304) |
+| `chunker_version` | `INT` | | `CHUNKER_VERSION`, którą podzielono stronę; inna wymusza ponowny podział i embedding |
 | `last_crawled` | `TIMESTAMPTZ` | DEFAULT now() | Data ostatniego odwiedzenia |
 
 **Relacje:** tabele nie mają kluczy obcych; powiązane są logicznie przez kolumnę
 `url`. Wyszukiwanie semantyczne realizowane jest zapytaniem cosinus-podobieństwa
 na kolumnie `embedding` przy użyciu operatora `<=>` (pgvector). Parametr `TOP_K`
 (domyślnie 8) steruje liczbą zwracanych fragmentów.
+
+Kolumny `page_type`, `published_at` i `chunker_version` dodaje migracja w
+`_ensure_schema()` (`ingestion/ingest.py`, `ALTER TABLE … ADD COLUMN IF NOT EXISTS`) —
+`infra/init.sql` wykonuje się tylko przy pierwszym starcie kontenera.
 
 ## 1.5 Makiety UI
 
