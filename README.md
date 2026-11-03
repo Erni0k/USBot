@@ -11,6 +11,7 @@ Użytkownik (terminal)
     cli.py
        │
        ├─ retrieval: pgvector (embeddingi bge-m3, zapytanie z kontekstem rozmowy)
+       ├─ próg odległości: nic dość bliskiego → stała odpowiedź, bez LLM-a
        └─ generacja: Ollama / vLLM (Qwen3, API OpenAI-compatible)
 ```
 
@@ -24,7 +25,7 @@ us-chatbot/
 │   ├── ingest.py       # pipeline: crawl → chunking → embeddingi → pgvector
 │   └── scrape.py       # inkrementalny crawler BFS (stały pool żądań, limit na domenę)
 ├── evaluation/
-│   ├── evaluate.py     # metryki retrievalu: Hit/Recall/Precision/nDCG@k, MRR
+│   ├── evaluate.py     # metryki retrievalu: Hit/Recall/Precision/nDCG@k, MRR, dobór progu
 │   └── queries.jsonl   # pytania testowe z oznaczonymi URL-ami
 ├── infra/              # init.sql (pgvector, tabele chunks i pages)
 ├── docker-compose.yml  # baza Postgres + opcjonalnie vLLM
@@ -152,6 +153,7 @@ Wymaga tylko bazy, Ollama nie jest potrzebna.
 python evaluation/evaluate.py
 python evaluation/evaluate.py --k 1 3 5 10 20 --verbose   # + URL-e dla pudłowanych pytań
 python evaluation/evaluate.py --out wyniki.json           # wyniki per pytanie
+python evaluation/evaluate.py --threshold-sweep           # skutki progu MAX_DISTANCE 0.30–0.60
 ```
 
 Format jednej linii `queries.jsonl`:
@@ -169,6 +171,11 @@ Format jednej linii `queries.jsonl`:
 - Puste `relevant` = pytanie spoza zakresu bazy. Dla takich pytań skrypt pokazuje
   tylko odległość najlepszego wyniku — porównanie z pytaniami „w zakresie" pomaga
   dobrać próg odcięcia.
+- `--threshold-sweep` dla progów 0.30–0.60 (co 0.01) pokazuje, ile pytań spoza
+  zakresu i w zakresie zostałoby odrzuconych oraz ile trafień by przepadło (w top-`TOP_K`,
+  czyli tyle fragmentów, ile dostaje LLM). Uruchom po każdej zmianie bazy lub modelu
+  embeddingów i w razie potrzeby popraw `MAX_DISTANCE` — uzasadnienie obecnej wartości
+  jest w `docs/testy.md` (6.4).
 - Odpalaj przed i po każdej zmianie chunkingu, modelu embeddingów czy sposobu
   wyszukiwania. Po re-crawlu sprawdź, czy oznaczone URL-e nadal są w bazie.
 
@@ -181,6 +188,7 @@ Format jednej linii `queries.jsonl`:
 | `LLM_MODEL` | nazwa modelu w Ollama/vLLM | `qwen3:8b` |
 | `EMBED_MODEL` | model embeddingów | `BAAI/bge-m3` |
 | `TOP_K` | ile fragmentów z bazy trafia do kontekstu | `8` |
+| `MAX_DISTANCE` | maks. odległość kosinusowa fragmentu; gdy żaden się nie mieści, bot odpowiada „Nie mam tej informacji…" bez wywołania LLM-a | `0.43` |
 | `ENABLE_THINKING` | tryb rozumowania Qwen3 (wolniejszy) | `false` |
 | `CRAWL_LIMIT` | maks. liczba stron na jeden crawl | `6000` |
 | `CRAWL_DEPTH` | głębokość BFS (0 = tylko sitemap + seedy) | `3` |
@@ -193,7 +201,14 @@ Format jednej linii `queries.jsonl`:
 
 - `.env` **nie trafia do gita** — współdziel tylko `.env.example`.
 - Retrieval bierze pod uwagę kilka ostatnich pytań użytkownika, więc krótkie
-  follow-upy („a wnst?", „dziekanatu tam") trafiają we właściwy kontekst.
+  follow-upy („a wnst?", „dziekanatu tam") trafiają we właściwy kontekst. Równolegle
+  szuka samym ostatnim pytaniem i łączy wyniki — po zmianie tematu wcześniejsze
+  pytania nie psują wyszukiwania.
+- Gdy żaden fragment nie jest bliżej niż `MAX_DISTANCE`, bot od razu odpowiada
+  „Nie mam tej informacji – sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
+  i nie woła modelu — zamiast dawać mu niepasujący kontekst, na którym zmyśla. Próg
+  odrzuca ok. połowę pytań spoza zakresu; najtrudniejsze są pytania o inne uczelnie
+  (np. dziekanat Politechniki), które przechodzą i trafiają do LLM-a.
 - Przy pytaniu o **dziekanat** (godziny, kontakt) bez podania wydziału bot dopytuje,
   o który wydział chodzi, i wymienia dostępne — zamiast zgadywać.
 - Jeśli strona zniknie z serwisu (404), jej stare fragmenty zostają w bazie — okresowo

@@ -27,12 +27,17 @@ LLM_API_KEY  = os.getenv("LLM_API_KEY", "not-needed")
 LLM_MODEL    = os.getenv("LLM_MODEL", "qwen3:1.7b")
 EMBED_MODEL  = os.getenv("EMBED_MODEL", "BAAI/bge-m3")
 TOP_K        = int(os.getenv("TOP_K", "5"))
+# Fragmenty dalsze niż próg (odległość kosinusowa) są odrzucane; gdy nie zostanie
+# żaden, bot odpowiada NO_INFO bez wywołania LLM-a. Wybór progu: docs/testy.md (6.4).
+MAX_DISTANCE = float(os.getenv("MAX_DISTANCE", "0.43"))
 ENABLE_THINKING = os.getenv("ENABLE_THINKING", "false").lower() == "true"
+
+NO_INFO = "Nie mam tej informacji – sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
 
 SYSTEM_PROMPT = """Jesteś asystentem Uniwersytetu Śląskiego w Katowicach.
 Odpowiadaj WYŁĄCZNIE na podstawie poniższego kontekstu.
 Jeśli w kontekście nie ma odpowiedzi, powiedz:
-"Nie mam tej informacji - sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
+"Nie mam tej informacji – sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
 Podawaj źródłowy adres URL, z którego pochodzi informacja.
 Nie zmyślaj dat, nazwisk, godzin ani kwot. Odpowiadaj po polsku, zwięźle i uprzejmie.
 
@@ -66,16 +71,24 @@ def embed(text: str) -> list[float]:
     return get_embedder().encode(text, normalize_embeddings=True).tolist()
 
 
-def retrieve(question: str, k: int = TOP_K) -> list[dict]:
+def retrieve(question: str, k: int = TOP_K, max_distance: float | None = MAX_DISTANCE) -> list[dict]:
+    """Zwraca do k najbliższych fragmentów; z `max_distance` tylko te nie dalsze niż próg.
+
+    Próg sprawdzamy w Pythonie, nie w SQL: przy indeksie HNSW warunek WHERE na
+    odległość filtruje dopiero kandydatów z indeksu i może zwrócić za mało wyników.
+    """
     qvec = embed(question)
     with psycopg.connect(DATABASE_URL) as conn:
         register_vector(conn)
         rows = conn.execute(
-            "SELECT url, title, content, embedding <=> %s::vector AS dist "
+            "SELECT id, url, title, content, embedding <=> %s::vector AS dist "
             "FROM chunks ORDER BY dist LIMIT %s",
             (qvec, k),
         ).fetchall()
-    return [{"url": r[0], "title": r[1], "content": r[2], "dist": r[3]} for r in rows]
+    chunks = [{"id": r[0], "url": r[1], "title": r[2], "content": r[3], "dist": r[4]} for r in rows]
+    if max_distance is not None:
+        chunks = [c for c in chunks if c["dist"] <= max_distance]
+    return chunks
 
 
 def build_context(chunks: list[dict]) -> str:
@@ -92,6 +105,24 @@ def build_query(history: list[dict], turns: int = 3) -> str:
     """
     user_msgs = [m["content"] for m in history if m["role"] == "user"]
     return "\n".join(user_msgs[-turns:])
+
+
+def retrieve_for_chat(history: list[dict], k: int = TOP_K, max_distance: float = MAX_DISTANCE) -> list[dict]:
+    """Szuka zapytaniem z historii (build_query) i samym ostatnim pytaniem, łączy wyniki.
+
+    Historia ratuje follow-upy ("a wnst?" samo jest daleko od wszystkiego), ale po
+    zmianie tematu wcześniejsze pytania psują zapytanie — po "przepis na pierogi"
+    pytanie o urlop dziekański z historią byłoby odrzucone, choć samo pasuje dobrze.
+    Każdy fragment dostaje mniejszą z dwóch odległości; próg stosujemy po złączeniu.
+    """
+    last = next(m["content"] for m in reversed(history) if m["role"] == "user")
+    best: dict[int, dict] = {}
+    for query in dict.fromkeys([build_query(history), last]):
+        for c in retrieve(query, k=k, max_distance=None):
+            if c["id"] not in best or c["dist"] < best[c["id"]]["dist"]:
+                best[c["id"]] = c
+    chunks = sorted(best.values(), key=lambda c: c["dist"])[:k]
+    return [c for c in chunks if c["dist"] <= max_distance]
 
 
 def main() -> None:
@@ -121,7 +152,13 @@ def main() -> None:
         history.append({"role": "user", "content": user_input})
 
         try:
-            chunks = retrieve(build_query(history))
+            chunks = retrieve_for_chat(history)
+            if not chunks:
+                # Nic w bazie nie jest dość bliskie — LLM dostałby same śmieci i zmyślał
+                print(f"\nBot: {NO_INFO}\n")
+                history.append({"role": "assistant", "content": NO_INFO})
+                continue
+
             context = build_context(chunks)
             messages = [{"role": "system", "content": SYSTEM_PROMPT.format(context=context)}] + history
 

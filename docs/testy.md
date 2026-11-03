@@ -15,12 +15,14 @@
 | T02 | Jednostkowy | `build_context()` | Pusta lista chunks | String informujący o braku danych |
 | T03 | Jednostkowy | `build_context()` | Lista 2 chunks z URL | Połączony tekst z nagłówkami `[Źródło: ...]` |
 | T04 | Jednostkowy | `build_query()` | Historia z kilkoma turami | Sklejone ostatnie pytania użytkownika |
-| T05 | Integracyjny | `retrieve()` | Pytanie z danymi w bazie | Zwrócenie `TOP_K` rekordów |
+| T05 | Integracyjny | `retrieve()` | Pytanie z danymi w bazie | Do `TOP_K` rekordów, żaden dalszy niż `MAX_DISTANCE` |
 | T06 | Integracyjny | `scrape.crawl()` | Strona zwraca 304 | Status `unchanged`, brak re-embeddingu |
 | T07 | Integracyjny | `ingest._flush()` | Zmieniona strona | Podmiana fragmentów + wpis w `pages` |
 | T08 | E2E | `cli.main()` | Wpisanie `wyjdź` | `sys.exit(0)`, brak wyjątku |
 | T09 | E2E | `cli.main()` | Symulacja błędu bazy | Komunikat błędu, kontynuacja pętli |
 | T10 | Manualny | API LLM | Pytanie o godziny dziekanatu | Odpowiedź po polsku z URL |
+| T11 | E2E | `cli.main()` | Pytanie spoza zakresu (`retrieve_for_chat()` zwraca pustą listę) | Stały tekst „Nie mam tej informacji…”, brak wywołania LLM |
+| T12 | Integracyjny | `retrieve_for_chat()` | Follow-up „a wnst?” po pytaniu o dziekanat; pytanie w zakresie po kilku spoza zakresu | Oba nieodrzucone, trafne strony w wynikach |
 
 ## 6.3 Instrukcja uruchomienia testów
 
@@ -45,7 +47,9 @@ docker compose down
 Niezależnie od testów kodu mierzymy jakość samego wyszukiwania (bez LLM-a) skryptem
 `evaluation/evaluate.py` na zbiorze `evaluation/queries.jsonl`: 48 pytań studenckich
 z ręcznie oznaczonymi stronami (ocena `2` = odpowiada na pytanie, `1` = częściowo)
-oraz 8 pytań spoza zakresu (pogoda, inna uczelnia, prompt injection).
+oraz 18 pytań spoza zakresu (pogoda, inne uczelnie, wiedza ogólna, small talk, prośby
+o kod, prompt injection). Pierwsze 8 pytań spoza zakresu powstało razem ze zbiorem,
+10 kolejnych dodano przy doborze progu odcięcia (patrz niżej).
 
 Oznaczanie łączyło kandydatów z wyszukiwania wektorowego, wyszukiwania po słowach
 kluczowych i ręcznego przejrzenia serwisu `us.edu.pl/student/` — żeby etykiety nie
@@ -148,6 +152,92 @@ kolumny Hit@k są równe. Brakuje tylko martwego adresu `…/dziekanat-2/` (404)
   spoza zakresu i żadne w zakresie; przy 0.40 — 6/8 i jedno w zakresie (bez trafienia
   w top-10). Najbliżej bazy nadal są pytania o inne uczelnie (Politechnika 0.360,
   SUM 0.398).
+
+**Próg odcięcia `MAX_DISTANCE`** (2026-11-03; baza jak w wyniku 1a, k = `TOP_K` = 8).
+`retrieve()` zawsze zwracał `TOP_K` fragmentów, także gdy żaden nie pasował — LLM
+dostawał wtedy niepasujący kontekst i zmyślał. Teraz fragmenty dalsze niż
+`MAX_DISTANCE` są odrzucane (w Pythonie, po `ORDER BY … LIMIT` — przy indeksie HNSW
+warunek `WHERE` na odległość może zwrócić za mało wyników), a gdy nie zostanie żaden,
+bot odpowiada stałym tekstem bez wywołania LLM-a.
+
+Do zbioru dodano 10 pytań spoza zakresu, głównie „trudnych” — tematycznie bliskich
+uczelni: rekrutacja na UE Katowice, egzaminy na ASP, akademik AWF, Erasmus z UJ,
+biblioteka Uniwersytetu Wrocławskiego, matura, płaca minimalna, PIT, zapytanie SQL
+o średnią ocen, small talk. Przed dodaniem sprawdzono top-3 wyniki każdego z nich:
+baza zawiera strony podobne tematycznie (akademiki UŚ, Erasmus na UŚ, porady
+maturalne), ale żadna nie odpowiada na pytanie. Etykiet istniejących pytań nie
+zmieniano.
+
+Wynik `python evaluation/evaluate.py --threshold-sweep` (fragment): pytanie jest
+odrzucane, gdy nawet najlepszy fragment jest dalej niż próg; „strata” = odrzucone
+pytanie w zakresie, które miało trafną stronę w top-8; „utracone łącznie” dolicza
+pytania nieodrzucone, którym próg odciął wszystkie trafne fragmenty.
+
+| Próg | Spoza zakresu odrzucone | W zakresie odrzucone | W tym strata | Trafienia utracone łącznie |
+|---|---|---|---|---|
+| 0.36 | 15/18 | 6/48 | 3 | 5 |
+| 0.38 | 15/18 | 3/48 | 1 | 2 |
+| 0.39 | 14/18 | 1/48 | 0 | 2 |
+| 0.40 | 11/18 | 1/48 | 0 | 1 |
+| 0.41 | 10/18 | 0/48 | 0 | 1 |
+| 0.42 | 10/18 | 0/48 | 0 | 1 |
+| **0.43** | **9/18** | **0/48** | **0** | **0** |
+| 0.44 | 6/18 | 0/48 | 0 | 0 |
+| 0.46 | 4/18 | 0/48 | 0 | 0 |
+| 0.55 | 0/18 | 0/48 | 0 | 0 |
+
+Odległość top-1: w zakresie 0.191–0.406 (mediana 0.291), spoza zakresu 0.347–0.542
+(mediana 0.426). Na starych 8 pytaniach spoza zakresu próg 0.42 nadal odrzuca 6/8 bez
+utraty trafień — wcześniejszy pomiar się potwierdza.
+
+**Wybrano 0.43:**
+
+- To najniższy próg bez żadnych strat: 0/48 pytań w zakresie odrzuconych i żadne
+  trafienie nie zostaje odcięte. Przy 0.41–0.42 przepada trafny fragment pytania
+  `thunderbird` (odległość 0.4296; top-1 tego pytania, 0.387, jest nietrafny), przy
+  0.39–0.40 odrzucane jest już pytanie `kampus-cieszyn` (top-1 0.406).
+- Margines nad najdalszym pytaniem w zakresie (0.406) wynosi 0.024. Zbiór ma tylko 48
+  pytań, więc prawdziwe pytania sformułowane inaczej mogą wypaść dalej — niższy próg
+  dawałby zerowy margines.
+- Follow-upy (patrz niżej) mają większe odległości niż pierwsze pytanie w rozmowie:
+  „nie działa mi, co robić?” po dwóch pytaniach o eduroam ma 0.424 — próg 0.42 by go
+  odrzucił.
+- Koszt względem 0.42: jedno pytanie spoza zakresu mniej odrzucone (small talk
+  „Cześć, jak się dzisiaj masz?”, 0.420) — na nie LLM i tak odpowie nieszkodliwie.
+
+Próg odrzuca połowę pytań spoza zakresu (9/18). Przechodzą wszystkie 7 pytań o inne
+uczelnie, pytanie o maturę (0.347–0.403) oraz small talk — rozkłady nakładają się z pytaniami w
+zakresie (np. `kampus-cieszyn` 0.406), więc sam próg ich nie odfiltruje. Dla nich
+zostaje instrukcja w prompcie systemowym („Jeśli w kontekście nie ma odpowiedzi…”).
+
+**Follow-upy i `build_query()`.** Zapytanie do wyszukiwarki skleja 3 ostatnie pytania
+użytkownika. Sprawdzono 13 rozmów testowych (top-1 z historią vs. samo pytanie):
+
+- Historia ratuje krótkie follow-upy: „a wnst?” po pytaniu o dziekanat WH ma 0.336
+  (samo: 0.484), „a socjalne?” 0.266 (0.462), „a co tam jest o warunku?” 0.331 (0.478),
+  „a telefon?” 0.314 (0.451). Bez historii wszystkie byłyby odrzucone.
+- Historia szkodzi po zmianie tematu: „przepis na pierogi” → „wybory” → „Jak uzyskać
+  urlop dziekański?” dawało 0.512 (samo pytanie: 0.259) — fałszywe odrzucenie, a i bez
+  progu top-1 był przypadkowy. Podobnie „pogoda” → „Jak zalogować się do USOSweb?”:
+  0.404 z nietrafnym top-1 zamiast 0.291 i strony o USOSweb.
+- Dlatego `retrieve_for_chat()` szuka dwoma zapytaniami — z historią i samym ostatnim
+  pytaniem — i dla każdego fragmentu bierze mniejszą odległość. Po zmianie wszystkie
+  follow-upy przechodzą próg, a pytania po zmianie tematu dostają właściwe strony
+  (urlop 0.259 → `tok-studiow-2/urlopy`, USOSweb 0.291).
+- Ograniczenie: pytanie spoza zakresu zadane po pytaniu w zakresie przechodzi dzięki
+  historii („stypendium rektora” → „przepis na pierogi”: 0.378). LLM dostaje wtedy
+  kontekst o stypendiach i musi sam odmówić.
+
+**Uwagi:**
+
+- Wyszukiwanie HNSW jest przybliżone. Dla 48 pytań w zakresie top-1 zgadza się z
+  wyszukiwaniem dokładnym, ale dla części pytań spoza zakresu indeks zwraca dalszy
+  top-1 niż pełny skan (pogoda 0.433 vs 0.395, prompt injection 0.517 vs 0.500,
+  przepis 0.532 vs 0.481). Część odrzuceń zależy więc od stanu indeksu — po `REINDEX`
+  lub większej ingestii trzeba powtórzyć sweep.
+- Dla zapytania „nie działa mi, co robić?” indeks HNSW zwraca **0 wierszy** (pełny skan
+  znajduje fragment w odległości 0.389). Bot odpowiada wtedy stałym tekstem — tak samo
+  jak przy przekroczeniu progu.
 
 !!! warning "Status"
     Katalog `tests/` jest **planowany** — testy zostaną zaimplementowane w kolejnych
