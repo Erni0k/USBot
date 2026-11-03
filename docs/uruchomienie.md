@@ -132,15 +132,19 @@ Inicjalizacja przebiega automatycznie przy pierwszym uruchomieniu kontenera — 
 `infra/init.sql` wykonywany jest przez mechanizm `docker-entrypoint-initdb.d`.
 Tworzy on:
 
-- rozszerzenie pgvector (`CREATE EXTENSION IF NOT EXISTS vector`),
-- tabelę `chunks` z indeksami `chunks_embedding_idx` (HNSW) i `chunks_url_idx`,
+- rozszerzenia pgvector i unaccent (`CREATE EXTENSION IF NOT EXISTS vector`, `unaccent`)
+  oraz funkcję `immutable_unaccent()`,
+- tabelę `chunks` z indeksami `chunks_embedding_idx` (HNSW), `chunks_content_tsv_idx`
+  (GIN, wyszukiwanie pełnotekstowe) i `chunks_url_idx`,
 - tabelę `pages` (stan crawlera).
 
 `init.sql` nie wykona się ponownie na istniejącym wolumenie, dlatego kolumny dodane
 później (`chunks.page_type`, `chunks.published_at`, `chunks.content_hash`,
-`chunks.body_hash`, `pages.chunker_version`, `pages.chunk_hashes`) dokłada migracja w
-`_ensure_schema()` przy każdym starcie `ingestion/ingest.py`. `cli.py` korzysta z
-`body_hash`, więc po aktualizacji kodu uruchom ingestię przed botem.
+`chunks.body_hash`, `chunks.content_tsv`, `pages.chunker_version`, `pages.chunk_hashes`)
+dokłada migracja w `_ensure_schema()` przy każdym starcie `ingestion/ingest.py`. `cli.py`
+korzysta z `body_hash`, a tryb `RETRIEVAL_MODE=hybrid` z `content_tsv`, więc po
+aktualizacji kodu uruchom ingestię przed botem. Dodanie `content_tsv` przepisuje całą
+tabelę `chunks` (z indeksem HNSW) — pierwsza migracja trwa ok. minuty.
 
 !!! info "Port bazy danych: 5433"
     Baza mapowana jest na port **5433** (`5433:5432` w `docker-compose.yml`), aby

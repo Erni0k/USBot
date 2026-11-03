@@ -22,6 +22,7 @@ Użytkownik (terminal)
     cli.py
        │
        ├─ retrieval: pgvector (embeddingi bge-m3, zapytanie z kontekstem rozmowy)
+       │    opcjonalnie + pełnotekstowe Postgres FTS, łączone przez RRF (RETRIEVAL_MODE=hybrid)
        ├─ wybór TOP_K: bez powtórzonej treści, maks. 2 fragmenty z jednej strony
        ├─ próg odległości: nic dość bliskiego → stała odpowiedź, bez LLM-a
        └─ generacja: Ollama / vLLM (Qwen3, API OpenAI-compatible, streaming)
@@ -30,6 +31,8 @@ Użytkownik (terminal)
 1. Pytanie użytkownika (wraz z kilkoma poprzednimi turami) jest **embeddowane lokalnie**.
 2. Zapytanie wektorowe do **PostgreSQL + pgvector** zwraca `TOP_K` najbliższych fragmentów —
    ta sama treść tylko raz, najwyżej `MAX_PER_URL` (2) fragmenty z jednej strony.
+   Z `RETRIEVAL_MODE=hybrid` dochodzi wyszukiwanie pełnotekstowe (Postgres FTS), a obie
+   listy łączy Reciprocal Rank Fusion.
 3. Fragmenty trafiają do **system promptu** jako kontekst.
 4. **Model LLM** (Qwen3 przez Ollama/vLLM) generuje odpowiedź strumieniowo.
 
@@ -38,7 +41,8 @@ Wiedza w bazie utrzymywana jest osobnym, **inkrementalnym crawlerem**
 
 ## Najważniejsze cechy
 
-- 🔍 **RAG** na bazie wektorowej pgvector (embeddingi `BAAI/bge-m3`, 1024 wymiary)
+- 🔍 **RAG** na bazie wektorowej pgvector (embeddingi `BAAI/bge-m3`, 1024 wymiary),
+  opcjonalnie **hybrydowy** z wyszukiwaniem pełnotekstowym (`RETRIEVAL_MODE=hybrid`)
 - 🧠 **Lokalny LLM** Qwen3 (domyślnie `qwen3:8b`) — bez wysyłania danych na zewnątrz
 - 💬 **Rozmowa wieloturowa** z retrievalem uwzględniającym kontekst poprzednich pytań
 - 🕸️ **Inkrementalny crawler** BFS z równoległym pobieraniem (limit żądań na domenę) i pomijaniem niezmienionych stron

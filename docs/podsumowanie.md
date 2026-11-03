@@ -68,11 +68,15 @@
   tekstem bez wywołania LLM-a.
 - **Różnorodność wyników** — w top-k ta sama treść występuje raz, a jedna strona zajmuje
   najwyżej `MAX_PER_URL` (2) miejsc; zwolnione miejsca zajmują kolejni kandydaci.
+- **Wyszukiwanie hybrydowe** (`RETRIEVAL_MODE=hybrid`, domyślnie wyłączone) — wektorowe
+  + pełnotekstowe (`chunks.content_tsv`, `'simple'` + `unaccent`, GIN) łączone przez
+  Reciprocal Rank Fusion. Na zbiorze testowym nie poprawia kontekstu LLM-a (Hit@8 po
+  progu bez zmian), obniża Hit@1 — domyślny zostaje tryb wektorowy.
 - **Cache embeddingów i boilerplate** — `content_hash` w `chunks`: treść, która już jest
   w bazie, nie jest embedowana ponownie; treść na ponad 20 stronach (`BOILERPLATE_URLS`)
   nie trafia do bazy.
-- **Ewaluacja retrievalu** (`evaluation/evaluate.py`): 48 pytań z oznaczonymi
-  stronami + 18 spoza zakresu; Hit/Recall/Precision/nDCG@k, MRR, raport pokrycia
+- **Ewaluacja retrievalu** (`evaluation/evaluate.py`, `--mode vector|hybrid`): 56 pytań z
+  oznaczonymi stronami (w tym 8 ze skrótami i nazwami własnymi) + 18 spoza zakresu; Hit/Recall/Precision/nDCG@k, MRR, raport pokrycia
   bazy, dobór progu. Wynik bazowy 1a: Hit@10 0,917, MRR 0,630; po chunkingu z
   prefiksem: Hit@1 0,542, MRR 0,643; po deduplikacji i limicie na stronę: Hit@10 0,896,
   MRR 0,649 (patrz [Testy](testy.md)).
@@ -103,8 +107,10 @@
 ## 7.3 Kierunki rozwoju
 
 - **Interfejs webowy** — migracja z CLI do aplikacji webowej z czatem i streamingiem.
-- **RAG hybrydowy** — połączenie wyszukiwania wektorowego z pełnotekstowym
-  (PostgreSQL FTS) dla zapytań dokładnych (numery indeksów, kody przedmiotów).
+- **Lepszy RAG hybrydowy** — tryb `hybrid` istnieje, ale przegrywa z wektorowym. Do
+  sprawdzenia: ranking pełnotekstowy ważący rzadkie słowa (BM25/IDF), próg uwzględniający
+  dopasowanie słowne (pytania ze skrótami tracą dziś przez `MAX_DISTANCE`, nie przez
+  ranking), przegląd etykiet z kandydatami z obu trybów i większy zbiór pytań ze skrótami.
 - **Wielomodalność** — upload plików PDF (np. regulaminów) i pytania na ich podstawie.
 - **Panel administracyjny** — zarządzanie ingestią, przegląd fragmentów, monitoring jakości.
 - **Ewaluacja automatyczna** — metryki jakości RAG (RAGAS, TruLens) do mierzenia

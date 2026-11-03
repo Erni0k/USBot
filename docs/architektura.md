@@ -16,6 +16,7 @@ Użytkownik (terminal)
    │  embed(zapytanie) ──► SentenceTransformer              │
    │                       (BAAI/bge-m3, 1024 dim)          │
    │  retrieve()     ──► PostgreSQL + pgvector (operator <=>)│
+   │    [hybrid]     ──► + FTS (content_tsv @@), fuzja RRF  │
    │  _select()      ──► TOP_K bez duplikatów, ≤2 na stronę │
    │  build_context()──► string z TOP_K fragmentów          │
    │  LLM API call   ──► Ollama / vLLM (Qwen3, streaming)    │
@@ -30,7 +31,9 @@ Użytkownik (terminal)
 ```
 
 **Przepływ przy każdym pytaniu:** pytanie (wraz z kontekstem kilku poprzednich tur)
-jest embeddowane lokalnie → zapytanie wektorowe do PostgreSQL zwraca kandydatów →
+jest embeddowane lokalnie → zapytanie wektorowe do PostgreSQL zwraca kandydatów (w trybie
+`hybrid` także zapytanie pełnotekstowe; obie listy łączy RRF, a każdy kandydat ma
+odległość wektorową) →
 `_select()` wybiera `TOP_K`: ta sama treść tylko raz, najwyżej `MAX_PER_URL` fragmentów
 z jednej strony → fragmenty dalsze niż `MAX_DISTANCE` są odrzucane → kontekst
 wbudowywany jest w system prompt → model LLM generuje odpowiedź strumieniowo.
@@ -104,6 +107,7 @@ pliki binarne (PDF, obrazy, archiwa, dokumenty Office, audio/wideo).
 | Python | 3.11+ | Język aplikacji i skryptów ingestii |
 | PostgreSQL | 16 (`pgvector/pgvector:pg16`) | Baza danych wektorowych i tekstowych |
 | pgvector | rozszerzenie PostgreSQL | Przechowywanie i wyszukiwanie wektorów |
+| unaccent + FTS | rozszerzenie i wbudowane wyszukiwanie PostgreSQL | Wyszukiwanie pełnotekstowe (`tsvector`, GIN) w trybie `hybrid` |
 | BAAI/bge-m3 | ~2 GB, sentence-transformers | Model embeddingów wielojęzycznych (1024 dim) |
 | Qwen3 | domyślnie `qwen3:8b` | Model językowy (LLM) generujący odpowiedzi |
 | Ollama | zalecane | Lokalny serwer modelu z API zgodnym z OpenAI |

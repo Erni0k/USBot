@@ -11,6 +11,7 @@ Użytkownik (terminal)
     cli.py
        │
        ├─ retrieval: pgvector (embeddingi bge-m3, zapytanie z kontekstem rozmowy)
+       │    opcjonalnie + pełnotekstowe Postgres FTS, łączone przez RRF (RETRIEVAL_MODE=hybrid)
        ├─ wybór TOP_K: bez powtórzonej treści, maks. 2 fragmenty z jednej strony
        ├─ próg odległości: nic dość bliskiego → stała odpowiedź, bez LLM-a
        └─ generacja: Ollama / vLLM (Qwen3, API OpenAI-compatible)
@@ -28,7 +29,7 @@ us-chatbot/
 ├── evaluation/
 │   ├── evaluate.py     # metryki retrievalu: Hit/Recall/Precision/nDCG@k, MRR, dobór progu
 │   └── queries.jsonl   # pytania testowe z oznaczonymi URL-ami
-├── infra/              # init.sql (pgvector, tabele chunks i pages)
+├── infra/              # init.sql (pgvector, unaccent, tabele chunks i pages)
 ├── docker-compose.yml  # baza Postgres + opcjonalnie vLLM
 └── .env.example
 ```
@@ -213,6 +214,7 @@ python evaluation/evaluate.py
 python evaluation/evaluate.py --k 1 3 5 10 20 --verbose   # + URL-e dla pudłowanych pytań
 python evaluation/evaluate.py --out wyniki.json           # wyniki per pytanie
 python evaluation/evaluate.py --threshold-sweep           # skutki progu MAX_DISTANCE 0.30–0.60
+python evaluation/evaluate.py --mode hybrid               # tryb wyszukiwania (domyślnie RETRIEVAL_MODE)
 ```
 
 Format jednej linii `queries.jsonl`:
@@ -274,6 +276,15 @@ Format jednej linii `queries.jsonl`:
   Zwolnione miejsca zajmują kolejni kandydaci, więc nadal jest `TOP_K` wyników.
   Po aktualizacji kodu uruchom raz ingestię — migracja dodaje kolumny, z których
   korzysta `cli.py`.
+- **Tryb wyszukiwania** wybiera `RETRIEVAL_MODE`. Domyślny `vector` to samo wyszukiwanie
+  wektorowe. `hybrid` dokłada wyszukiwanie pełnotekstowe po `chunks.content_tsv`
+  (konfiguracja `'simple'` + `unaccent` — Postgres nie ma polskiej; słowa pytania bez
+  stop-słów połączone OR, ranking `ts_rank_cd`) i łączy obie listy przez Reciprocal Rank
+  Fusion (`Σ 1/(60 + pozycja)`). Próg `MAX_DISTANCE` działa w obu trybach na odległości
+  wektorowej. Na zbiorze testowym hybryda nie poprawia tego, co dostaje LLM (Hit@8 po
+  progu bez zmian), a obniża Hit@1 — stąd domyślny `vector` (`docs/testy.md`, 6.4).
+  Kolumnę `content_tsv` dodaje migracja w ingestii (za pierwszym razem ok. minuty —
+  przepisuje tabelę); bez niej tryb `hybrid` nie zadziała.
 - Gdy żaden fragment nie jest bliżej niż `MAX_DISTANCE`, bot od razu odpowiada
   „Nie mam tej informacji – sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
   i nie woła modelu — zamiast dawać mu niepasujący kontekst, na którym zmyśla. Próg
