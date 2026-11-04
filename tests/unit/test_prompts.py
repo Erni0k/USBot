@@ -2,7 +2,8 @@
 import pytest
 
 from tests.fakes import chunk
-from usbot.core.faculties import mentioned_faculties, needs_faculty, normalize
+from usbot.core.faculties import (expand_faculties, mentioned_faculties, needs_faculty,
+                                  normalize)
 from usbot.core.prompts import build_context, build_query, search_queries
 
 
@@ -76,3 +77,17 @@ def test_mentioned_faculties(text, codes):
 ])
 def test_needs_faculty(history, expected):
     assert needs_faculty(history) is expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("WNP", "Wydział Nauk Przyrodniczych (WNP)"),
+    ("chodzi o wpia", "chodzi o Wydział Prawa i Administracji (wpia)"),
+    ("WNŚiT", "Wydział Nauk Ścisłych i Technicznych (WNŚiT)"),
+    ("a wnst?", "a Wydział Nauk Ścisłych i Technicznych (wnst)?"),
+    ("WH i WTL", "Wydział Humanistyczny (WH) i Wydział Teologiczny (WTL)"),
+    # tylko całe słowa; pełne nazwy i inne słowa bez zmian
+    ("WNPX wnp2 Wydział Nauk Przyrodniczych", "WNPX wnp2 Wydział Nauk Przyrodniczych"),
+    ("Jak skonfigurować eduroam?", "Jak skonfigurować eduroam?"),
+])
+def test_expand_faculties(text, expected):
+    assert expand_faculties(text) == expected

@@ -7,6 +7,11 @@ nadal zawiera tę samą instrukcję — na sformułowania, których reguła nie 
 
 Reguła patrzy tylko na pytania użytkownika (te same HISTORY_TURNS co build_query()),
 po zamianie na małe litery i usunięciu polskich znaków („WNŚiT” → „wnsit”).
+
+Po dopytaniu użytkownik często odpowiada samym skrótem („WNP”), a embedding słabo
+rozumie skróty: zapytanie trafiało w dziekanat innego wydziału albo nie przechodziło
+progu. Dlatego expand_faculties() dopisuje do zapytania pełną nazwę wydziału
+(pomiar: docs/testy.md, 6.4).
 """
 import re
 import unicodedata
@@ -56,9 +61,31 @@ def normalize(text: str) -> str:
                    if not unicodedata.combining(ch))
 
 
+# Skróty (po normalize()) → wydział; WNST to nieoficjalny wariant WNŚiT
+_ABBREVIATIONS: dict[str, Faculty] = {
+    abbr: f
+    for f in FACULTIES
+    for abbr in {"WNŚiT": ("wnsit", "wnst")}.get(f.code, (f.code.lower(),))
+}
+_WORD = re.compile(r"\w+")
+
+
 def mentioned_faculties(text: str) -> list[Faculty]:
     norm = normalize(text)
     return [f for f in FACULTIES if f.pattern.search(norm)]
+
+
+def expand_faculties(text: str) -> str:
+    """Dopisuje pełną nazwę przed skrótem wydziału: „WNP” → „Wydział Nauk Przyrodniczych (WNP)”.
+
+    Działa na całych słowach, w dowolnej wielkości liter i z polskimi znakami lub bez
+    („wnst”, „WNŚiT”). Skrót zostaje w nawiasie — wyszukiwanie pełnotekstowe nadal go
+    widzi, a pełna nazwa przybliża zapytanie wektorowo do stron dziekanatu tego wydziału.
+    """
+    def expand(m: re.Match) -> str:
+        f = _ABBREVIATIONS.get(normalize(m.group()))
+        return f"{f.name} ({m.group()})" if f else m.group()
+    return _WORD.sub(expand, text)
 
 
 def needs_faculty(history: Sequence[Message], turns: int = HISTORY_TURNS) -> bool:

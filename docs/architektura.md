@@ -103,6 +103,13 @@ Wcześniej dopytywał wyłącznie LLM na podstawie instrukcji w prompcie; instru
 została w prompcie na sformułowania, których reguła nie rozpozna. Próg ma
 pierwszeństwo: pytanie spoza zakresu dostaje `refused`, nie `clarify`.
 
+Na dopytanie użytkownik często odpowiada samym skrótem („WNP”), który embedding słabo
+rozumie. Dlatego `ChatService.retrieve()` przepuszcza zapytania przez `expand_faculties()`:
+przed każdym skrótem wydziału (całe słowo, dowolna wielkość liter, z polskimi znakami lub
+bez) dopisuje pełną nazwę — „WNP” → „Wydział Nauk Przyrodniczych (WNP)”. Dotyczy to
+każdego zapytania czatu ze skrótem, nie tylko po `clarify`; `evaluate.py` szuka
+retrieverem bezpośrednio, więc jej wyniki się nie zmieniają. Pomiar: [Testy](testy.md) (6.4).
+
 ## 2.2 Crawler — przepływ ingestii
 
 Crawler (`ingestion/scrape.py`) robi **BFS** po dozwolonych domenach, startując od

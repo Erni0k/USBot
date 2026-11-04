@@ -141,7 +141,22 @@ def test_follow_up_szuka_z_historia_i_samym_pytaniem():
                {"role": "assistant", "content": "pon–pt 9–13"}]
     svc, retriever, _ = service([chunk(1)])
     events(svc, "a wnst?", history)
-    assert retriever.calls[0][0] == ["Godziny dziekanatu WH\na wnst?", "a wnst?"]
+    assert retriever.calls[0][0] == [
+        "Godziny dziekanatu Wydział Humanistyczny (WH)\n"
+        "a Wydział Nauk Ścisłych i Technicznych (wnst)?",
+        "a Wydział Nauk Ścisłych i Technicznych (wnst)?",
+    ]
+
+
+def test_odpowiedz_skrotem_po_dopytaniu_szuka_z_pelna_nazwa():
+    history = [{"role": "user", "content": "Gdzie jest dziekanat?"},
+               {"role": "assistant", "content": CLARIFY_MESSAGE}]
+    svc, retriever, _ = service([chunk(1)])
+    events(svc, "WNP", history)
+    assert retriever.calls[0][0] == [
+        "Gdzie jest dziekanat?\nWydział Nauk Przyrodniczych (WNP)",
+        "Wydział Nauk Przyrodniczych (WNP)",
+    ]
 
 
 def test_pusta_odpowiedz_llm():

@@ -40,7 +40,7 @@ Status: ✅ — zaimplementowany (plik w kolumnie „Test”), ⏳ — planowany
 | T19 | Jednostkowy | `RerankingRetriever`, `cutoff()` | 30 kandydatów; trafny fragment dalszy niż `MAX_DISTANCE` | Reranker ocenia 20 kandydatów, zostaje `k`; próg na `rerank` (`MIN_RERANK_SCORE`), odległość nie odcina | ✅ `unit/test_ranking.py`, `unit/test_chat_service.py` |
 | T20 | Jednostkowy | `cutoff()` | Fragmenty z odległością 0.30 / 0.43 / 0.4301; progi `None` | 0.43 przechodzi (≤), 0.4301 odpada; `None` wyłącza próg | ✅ `unit/test_chat_service.py` |
 | T21 | Jednostkowy | `ChatService.stream()` | „Jakie są godziny otwarcia dziekanatu?”; to samo z „WNP”; odpowiedź „Wydział Nauk Przyrodniczych” po dopytaniu | Bez wydziału `clarify` z 7 wydziałami, LLM niewywołany; z wydziałem i po dopytaniu — odpowiedź LLM-a; pytanie spoza zakresu dostaje `refused`, nie `clarify` | ✅ `unit/test_chat_service.py` |
-| T22 | Jednostkowy | `needs_faculty()`, `mentioned_faculties()` | Skróty i nazwy wydziałów (z polskimi znakami i bez), „dziekan”, „urlop dziekański”, wydział sprzed >3 pytań | Wydział rozpoznany po skrócie lub rdzeniu nazwy; „dziekan”/„dziekański” nie wywołują dopytania | ✅ `unit/test_prompts.py` |
+| T22 | Jednostkowy | `needs_faculty()`, `mentioned_faculties()`, `expand_faculties()` | Skróty i nazwy wydziałów (z polskimi znakami i bez), „dziekan”, „urlop dziekański”, wydział sprzed >3 pytań; „WNP”, „a wnst?”, „WNPX” | Wydział rozpoznany po skrócie lub rdzeniu nazwy; „dziekan”/„dziekański” nie wywołują dopytania; przed skrótem dopisana pełna nazwa, tylko dla całych słów | ✅ `unit/test_prompts.py` |
 | T23 | Jednostkowy | `ChatService.stream()` | 3 fragmenty z 2 stron, historia z jedną turą | Zdarzenia `sources` → `token`… → `done`; źródła z wyników (każda strona raz); LLM dostaje prompt z kontekstem + historię + pytanie; `done.answer` = sklejone tokeny | ✅ `unit/test_chat_service.py` |
 | T24 | Jednostkowy | `Settings` | Zmienne `TOP_K`, `MAX_DISTANCE`, `DATABASE_URL`, `RERANK=1`/`TRUE`, `RETRIEVAL_MODE=" Hybrid "` | Te same nazwy i interpretacja co `os.getenv` (opcja włączona tylko dla „true”) | ✅ `unit/test_config.py` |
 | T25 | Integracyjny | `PgvectorRetriever` (`old_news_penalty`) | Stara aktualność najbliżej pytania, kara 0.2 | Aktualność spada za strony informacyjne; `dist` bez zmian, `score` = `dist` + kara | ✅ `integration/test_pgvector_retriever.py` |
@@ -746,3 +746,35 @@ samych adapterów (`build_retriever()`). Przed i po refaktorze uruchomiono
 zapytania, scalanie, próg), porównano osobno: stare `retrieve_for_chat()` i nowe
 `ChatService.retrieve()` dały te same fragmenty (`id`, `dist`, `score`, `rerank`) dla
 107 rozmów (1–3 tury, także follow-upy) w każdym z czterech trybów.
+
+**Odpowiedź skrótem po dopytaniu o wydział** (2026-11-04, ta sama baza). Scenariusz:
+pytanie o dziekanat bez wydziału (4 sformułowania) → `clarify` → odpowiedź skrótem
+(`WNP`, `wnp`, `chodzi o WNP`; dla WNŚiT także `WNST`, `wnst`) — 92 rozmowy przez
+`ChatService.retrieve()` (z progiem). Trafienie = strona dziekanatu tego wydziału z oceną 2
+w `queries.jsonl` (`dziekanat-*`); „zły wydział” = na 1. miejscu strona `/wydzial/<inny>/`.
+Porównano zapytanie bez zmian, skrót zamieniony na pełną nazwę i pełną nazwę dopisaną
+przed skrótem („Wydział Nauk Przyrodniczych (WNP)”):
+
+| Tryb | Zapytanie | Odpowiedź (nie odmowa) | Hit@1 | Hit@5 | MRR | Zły wydział @1 |
+|---|---|---|---|---|---|---|
+| vector | bez zmian | 0.95 | 0.23 | 0.61 | 0.363 | 0.39 |
+| vector | zamiana | 1.00 | 0.45 | 0.90 | 0.610 | 0.10 |
+| vector | **dopisanie** | 1.00 | 0.38 | **0.92** | 0.550 | **0.02** |
+| hybrid | bez zmian | 0.91 | 0.15 | 0.39 | 0.241 | 0.65 |
+| hybrid | dopisanie | 1.00 | 0.02 | 0.38 | 0.150 | 0.02 |
+| vector + rerank | bez zmian | 1.00 | 0.30 | 0.72 | 0.448 | 0.22 |
+| vector + rerank | dopisanie | 1.00 | 0.39 | 0.88 | 0.544 | 0.01 |
+| hybrid + rerank | bez zmian | 1.00 | 0.33 | 0.54 | 0.407 | 0.18 |
+| hybrid + rerank | dopisanie | 1.00 | 0.22 | 0.47 | 0.312 | 0.03 |
+
+Bez rozwijania odpowiedź „WNP” czy „WTL” w domyślnym trybie `vector` kończyła się odmową
+albo dziekanatem innego wydziału (39% rozmów). Wdrożono **dopisanie** (`expand_faculties()`):
+w `vector` prawie eliminuje zły wydział i daje najwyższe Hit@5; zamiana ma nieco wyższe
+MRR, ale częściej trafia w inny wydział, a usuwa skrót, którego potrzebuje wyszukiwanie
+pełnotekstowe. W trybach `hybrid` zły wydział też znika, ale Hit@1/MRR spadają: pełna nazwa
+w wyszukiwaniu pełnotekstowym przyciąga aktualności i wydarzenia wydziału („Bal Wydziału
+Prawa i Administracji”, inauguracje), które spychają stronę dziekanatu. Domyślny tryb to
+`vector`, więc zmianę zostawiono dla wszystkich trybów. Pojedyncze pytania z ewaluacji
+zmienia tylko jedno (`skrot-wnsit`: „Gdzie jest dziekanat WNŚiT?”); Hit@1 tych pytań na
+ścieżce czatu (z progiem) bez zmian w `vector`, `vector + rerank`, `hybrid`
+(0.419 / 0.405 / 0.365), w `hybrid + rerank` 0.392 → 0.405.

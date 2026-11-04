@@ -15,7 +15,7 @@ nie z tekstu LLM-a. ChatService nie trzyma stanu rozmowy — historię prowadzi 
 from collections.abc import Iterator, Sequence
 from typing import Literal, TypedDict
 
-from usbot.core.faculties import CLARIFY_MESSAGE, FACULTIES, needs_faculty
+from usbot.core.faculties import CLARIFY_MESSAGE, FACULTIES, expand_faculties, needs_faculty
 from usbot.core.models import Chunk, Message
 from usbot.core.prompts import NO_INFO, build_system_prompt, search_queries
 from usbot.ports import ChatLLM, Retriever
@@ -109,11 +109,13 @@ class ChatService:
     def retrieve(self, messages: Sequence[Message]) -> list[Chunk]:
         """Fragmenty dla ostatniego pytania w `messages`, po progu odcięcia.
 
-        Szukamy zapytaniem z historii i samym ostatnim pytaniem (search_queries());
+        Szukamy zapytaniem z historii i samym ostatnim pytaniem (search_queries()),
+        ze skrótami wydziałów rozwiniętymi do pełnych nazw (expand_faculties());
         każdy fragment dostaje lepszy z wyników, a duplikaty, limit na stronę i
         ewentualny reranking działają na złączonej liście (Retriever.search).
         """
-        chunks = self.retriever.search(search_queries(messages), self.top_k)
+        queries = list(dict.fromkeys(expand_faculties(q) for q in search_queries(messages)))
+        chunks = self.retriever.search(queries, self.top_k)
         return cutoff(chunks, self.max_distance, self.min_rerank_score)
 
     def stream(self, question: str, history: Sequence[Message] = ()) -> Iterator[Event]:

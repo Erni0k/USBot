@@ -346,6 +346,9 @@ nie trafiają do `os.environ` — zmienne bibliotek (np. `HF_HOME`) ustaw w śro
   dopytuje, o który wydział chodzi, i wymienia dostępne — zamiast zgadywać. Regułę
   sprawdza `ChatService` (zdarzenie `clarify`, bez wywołania LLM-a); ta sama instrukcja
   jest też w prompcie systemowym na sformułowania, których reguła nie rozpozna.
+  Skrót wydziału w pytaniu („WNP”, „wnst”) jest w zapytaniu do wyszukiwarki rozwijany
+  do pełnej nazwy (`expand_faculties()`), więc odpowiedź samym skrótem trafia we
+  właściwy dziekanat.
 - Jeśli strona zniknie z serwisu (404), jej stare fragmenty zostają w bazie — okresowo
   odpalaj `CRAWL_FRESH=true`, by wyczyścić nieaktualne treści. To samo dotyczy stron,
   dla których nowa ekstrakcja daje pusty tekst, i stron, do których przebieg nie
