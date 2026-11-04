@@ -1,0 +1,19 @@
+# Kontekst budowania obrazu Dockera (przyszły obraz API) — bez sekretów i danych.
+# Sekrety (.env) przekazuje się kontenerowi przy uruchomieniu (env_file / zmienne
+# środowiskowe), nigdy nie są kopiowane do obrazu.
+.env
+.env.*
+!.env.example
+logs/
+data/
+models/
+site/
+.git/
+.github/
+.venv/
+venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+prompty-rozwoju.md

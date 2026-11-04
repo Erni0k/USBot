@@ -45,6 +45,7 @@ def make_client(service, checks=None, closed=None, **settings) -> TestClient:
     def factory(_settings):
         return Resources(service=service, checks=checks or {},
                          close=lambda: closed.append(True) if closed is not None else None)
+    settings.setdefault("chat_log_enabled", False)
     return TestClient(create_app(Settings(_env_file=None, **settings), factory))
 
 
@@ -247,7 +248,7 @@ def test_health_blad_i_timeout_daja_503():
         elapsed = time.perf_counter() - start
     assert r.status_code == 503 and r.json()["status"] == "error"
     c = r.json()["checks"]
-    assert not c["database"]["ok"] and "connection refused" in c["database"]["error"]
+    assert not c["database"]["ok"] and c["database"]["error"] == "baza danych niedostępna"
     assert not c["llm"]["ok"] and "0.2 s" in c["llm"]["error"]
     assert c["embeddings"]["ok"]
     assert elapsed < 1.5  # sprawdzenia równolegle, zawieszone nie blokuje odpowiedzi
@@ -262,7 +263,7 @@ def test_zasoby_tworzone_raz_i_zamykane_przy_wylaczeniu():
         created.append(True)
         return Resources(service=None, close=lambda: closed.append(True))
 
-    with TestClient(create_app(Settings(_env_file=None), factory)) as client:
+    with TestClient(create_app(Settings(_env_file=None, chat_log_enabled=False), factory)) as client:
         for _ in range(3):
             assert client.get("/api/faculties").status_code == 200
         assert created == [True] and closed == []

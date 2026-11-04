@@ -20,3 +20,6 @@ site/
 # notatki robocze
 prompty-rozwoju.md
 .pytest_cache/
+
+# dziennik rozmów API (usbot/api/chatlog.py)
+logs/

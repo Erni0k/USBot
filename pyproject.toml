@@ -6,3 +6,8 @@ pythonpath = ["."]
 markers = [
     "integration: testy na prawdziwym Postgresie z pgvector (testcontainers, wymaga Dockera)",
 ]
+filterwarnings = [
+    # slowapi i langsmith na Pythonie 3.14 — ostrzeżenia bibliotek, nie naszego kodu
+    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:slowapi",
+    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:langsmith",
+]

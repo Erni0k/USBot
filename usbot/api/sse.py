@@ -77,11 +77,13 @@ _END = object()
 
 
 async def stream_events(service: ChatStreamer, question: str, history: Iterable[Message], *,
-                        heartbeat: float = HEARTBEAT_SECONDS) -> AsyncIterator[str]:
+                        heartbeat: float = HEARTBEAT_SECONDS,
+                        trace=None) -> AsyncIterator[str]:
     """Strumień SSE dla jednej odpowiedzi. Kończy się zdarzeniem `done` albo `error`.
 
     Przerwanie iteracji (rozłączenie klienta → anulowanie zadania, `aclose()`) zatrzymuje
-    wątek z ChatService przy najbliższym zdarzeniu.
+    wątek z ChatService przy najbliższym zdarzeniu. `trace` (chatlog.ChatTrace) dostaje
+    każde wysłane zdarzenie i na końcu zapisuje rekord dziennika rozmów.
     """
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
@@ -116,6 +118,7 @@ async def stream_events(service: ChatStreamer, question: str, history: Iterable[
             put(_END)
 
     loop.run_in_executor(None, worker)
+    finished = False
     try:
         while True:
             try:
@@ -124,7 +127,12 @@ async def stream_events(service: ChatStreamer, question: str, history: Iterable[
                 yield ": ping\n\n"
                 continue
             if item is _END:
+                finished = True
                 return
+            if trace is not None:
+                trace.event(item)
             yield format_sse(item)
     finally:
         stop.set()
+        if trace is not None:
+            trace.close(cancelled=not finished)
