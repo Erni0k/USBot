@@ -3,6 +3,7 @@ psycopg[binary]
 pgvector
 sentence-transformers
 python-dotenv
+pydantic-settings
 httpx
 trafilatura
 lxml

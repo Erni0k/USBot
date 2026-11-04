@@ -1,0 +1,8 @@
+# Konfiguracja narzędzi. Zależności: requirements.txt (aplikacja) i requirements-dev.txt (testy).
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "integration: testy na prawdziwym Postgresie z pgvector (testcontainers, wymaga Dockera)",
+]

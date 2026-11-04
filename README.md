@@ -22,8 +22,16 @@ Użytkownik (terminal)
 
 ```
 us-chatbot/
-├── cli.py              # aplikacja terminalowa (punkt wejścia)
+├── cli.py              # aplikacja terminalowa — cienki adapter na ChatService
+├── usbot/              # logika aplikacji (warstwy: docs/architektura.md, 2.1)
+│   ├── config.py       # ustawienia z env i .env (pydantic-settings)
+│   ├── ports.py        # interfejsy: Embedder, Retriever, Reranker, ChatLLM
+│   ├── core/           # ChatService (strumień zdarzeń), próg, prompt, dopytywanie, ranking
+│   ├── adapters/       # bge-m3, cross-encoder, pgvector (vector/hybrid), API OpenAI
+│   └── bootstrap.py    # składanie adapterów według ustawień
+├── tests/              # pytest: unit/ (atrapy portów), integration/ (testcontainers)
 ├── requirements.txt    # zależności Python
+├── requirements-dev.txt # + pytest, testcontainers
 ├── ingestion/
 │   ├── ingest.py       # pipeline: crawl → chunking → embeddingi (cache) → pgvector
 │   └── scrape.py       # inkrementalny crawler BFS (stały pool żądań, limit na domenę)
@@ -176,7 +184,7 @@ merytoryczna: regulamin akademików powtarzający się na 9 stronach domów stud
   jego wcześniejsze kopie są usuwane z `chunks` w tej samej transakcji. Przy starcie
   ingestia usuwa też boilerplate według bieżącego progu (np. po jego obniżeniu).
 - Reguła działa na całych fragmentach: wspólny akapit, który splitter skleił z inną
-  treścią, nie zostanie rozpoznany. W `retrieve()` ten sam tekst z kilku stron zostaje
+  treścią, nie zostanie rozpoznany. W wynikach wyszukiwania ten sam tekst z kilku stron zostaje
   dodatkowo tylko raz (patrz niżej).
 - Tekst, który spadnie poniżej progu (strony go usunęły), wraca do `chunks` dopiero
   przy ponownym embedowaniu pozostałych stron, np. po `CRAWL_FRESH=true`.
@@ -214,10 +222,26 @@ Wpisz pytanie i naciśnij Enter. Wyjście: `wyjdź` lub Ctrl+C.
 > Ollama musi działać (`ollama serve`) i baza musi być wstała (`docker compose up -d db`)
 > zanim odpalisz bota.
 
+`cli.py` to tylko pętla terminala: odpowiedź liczy `ChatService` z `usbot/core/chat.py`
+i zwraca ją jako strumień zdarzeń (`sources`, `token`, `refused`, `clarify`, `done`) —
+ten sam, z którego skorzysta aplikacja webowa. Opis warstw i zdarzeń:
+`docs/architektura.md` (2.1).
+
+## Testy
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/unit          # bez Dockera, bazy i modeli
+pytest tests/integration   # wymaga Dockera: testcontainers uruchamia pgvector/pgvector:pg16
+```
+
+Plan testów i szczegóły: `docs/testy.md` (6.2–6.3).
+
 ## 6. Ewaluacja retrievalu
 
 Mierzy samo wyszukiwanie (bez LLM-a) na zbiorze pytań z `evaluation/queries.jsonl`.
-Wymaga tylko bazy, Ollama nie jest potrzebna.
+Wymaga tylko bazy, Ollama nie jest potrzebna. Korzysta z tych samych adapterów co
+`cli.py` (`usbot.bootstrap.build_retriever()`), ale bez progu odcięcia.
 
 ```bash
 python evaluation/evaluate.py
@@ -254,6 +278,11 @@ Format jednej linii `queries.jsonl`:
 
 ## Konfiguracja (`.env`)
 
+Ustawienia wczytuje `usbot/config.py` (pydantic-settings): zmienna środowiskowa ma
+pierwszeństwo przed `.env` z katalogu głównego repozytorium. Opcje logiczne włącza tylko
+wartość `true`. Pozostałe klucze `.env` (np. `POSTGRES_*` dla Dockera) są ignorowane i
+nie trafiają do `os.environ` — zmienne bibliotek (np. `HF_HOME`) ustaw w środowisku.
+
 | Zmienna | Opis | Domyślnie |
 |---|---|---|
 | `DATABASE_URL` | połączenie do Postgresa | `...@localhost:5433/chatbot` |
@@ -264,7 +293,7 @@ Format jednej linii `queries.jsonl`:
 | `MAX_DISTANCE` | maks. odległość kosinusowa fragmentu; gdy żaden się nie mieści, bot odpowiada „Nie mam tej informacji…" bez wywołania LLM-a | `0.43` |
 | `OLD_NEWS_PENALTY` | kara dodawana do odległości (tylko przy sortowaniu) dla aktualności i wydarzeń starszych niż `OLD_NEWS_DAYS`; `0` = wyłączone | `0` |
 | `OLD_NEWS_DAYS` | od ilu dni aktualność/wydarzenie jest „stare" | `730` |
-| `MAX_PER_URL` | najwyżej tyle fragmentów z jednej strony w wynikach `retrieve()`; `0` = bez limitu | `2` |
+| `MAX_PER_URL` | najwyżej tyle fragmentów z jednej strony w wynikach wyszukiwania; `0` = bez limitu | `2` |
 | `RETRIEVAL_MODE` | `vector` — samo wyszukiwanie wektorowe; `hybrid` — wektorowe + pełnotekstowe (`chunks.content_tsv`) połączone przez RRF; porównanie w `docs/testy.md` (6.4) | `vector` |
 | `RERANK` | `true` = 20 najlepszych fragmentów ocenia cross-encoder i zostaje `TOP_K`; wymaga GPU (na CPU ~6 s na pytanie) | `false` |
 | `RERANK_MODEL` | model rerankera (cross-encoder) | `BAAI/bge-reranker-v2-m3` |
@@ -313,8 +342,10 @@ Format jednej linii `queries.jsonl`:
   i nie woła modelu — zamiast dawać mu niepasujący kontekst, na którym zmyśla. Próg
   odrzuca ok. połowę pytań spoza zakresu; najtrudniejsze są pytania o inne uczelnie
   (np. dziekanat Politechniki), które przechodzą i trafiają do LLM-a.
-- Przy pytaniu o **dziekanat** (godziny, kontakt) bez podania wydziału bot dopytuje,
-  o który wydział chodzi, i wymienia dostępne — zamiast zgadywać.
+- Przy pytaniu o **dziekanat** bez podania wydziału (w 3 ostatnich pytaniach) bot
+  dopytuje, o który wydział chodzi, i wymienia dostępne — zamiast zgadywać. Regułę
+  sprawdza `ChatService` (zdarzenie `clarify`, bez wywołania LLM-a); ta sama instrukcja
+  jest też w prompcie systemowym na sformułowania, których reguła nie rozpozna.
 - Jeśli strona zniknie z serwisu (404), jej stare fragmenty zostają w bazie — okresowo
   odpalaj `CRAWL_FRESH=true`, by wyczyścić nieaktualne treści. To samo dotyczy stron,
   dla których nowa ekstrakcja daje pusty tekst, i stron, do których przebieg nie

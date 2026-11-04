@@ -2,52 +2,77 @@
 
 ## 6.1 Narzędzia testowe
 
-- **pytest** — framework do testów jednostkowych i integracyjnych w Pythonie.
-- **pytest-mock / unittest.mock** — mockowanie wywołań API i połączeń z bazą danych.
+- **pytest** — framework do testów jednostkowych i integracyjnych (`tests/`, konfiguracja
+  w `pyproject.toml`).
+- **Atrapy portów** (`tests/fakes.py`) — `FakeRetriever`, `FakeLLM`, `FakeReranker`,
+  `FakeEmbedder` implementują protokoły z `usbot/ports.py`. Rdzeń (`ChatService`,
+  ranking) testuje się na nich bez bazy, modelu i serwera LLM — bez mockowania modułów.
+- **testcontainers** — testy integracyjne uruchamiają własny kontener
+  `pgvector/pgvector:pg16` (ten sam obraz co w `docker-compose.yml`), wgrywają schemat
+  z `infra/init.sql` i kilkanaście fragmentów z embeddingami przygotowanymi w fixture.
+  Baza deweloperska (`docker compose`) nie jest używana ani zmieniana.
 - **Postman / curl** — manualne testy API modelu językowego.
-- **Docker Compose** — izolowana baza danych do testów integracyjnych.
 
 ## 6.2 Plan testów
 
-| ID | Typ | Testowany moduł | Opis | Oczekiwany wynik |
-|---|---|---|---|---|
-| T01 | Jednostkowy | `embed()` | Weryfikacja kształtu wektora | Lista 1024 floatów |
-| T02 | Jednostkowy | `build_context()` | Pusta lista chunks | String informujący o braku danych |
-| T03 | Jednostkowy | `build_context()` | Lista 2 chunks z URL | Połączony tekst z nagłówkami `[Źródło: ...]` |
-| T04 | Jednostkowy | `build_query()` | Historia z kilkoma turami | Sklejone ostatnie pytania użytkownika |
-| T05 | Integracyjny | `retrieve()` | Pytanie z danymi w bazie | Do `TOP_K` rekordów, żaden dalszy niż `MAX_DISTANCE` |
-| T06 | Integracyjny | `scrape.crawl()` | Strona zwraca 304 | Status `unchanged`, brak re-embeddingu |
-| T07 | Integracyjny | `ingest._flush()` | Zmieniona strona | Podmiana fragmentów + wpis w `pages` |
-| T08 | E2E | `cli.main()` | Wpisanie `wyjdź` | `sys.exit(0)`, brak wyjątku |
-| T09 | E2E | `cli.main()` | Symulacja błędu bazy | Komunikat błędu, kontynuacja pętli |
-| T10 | Manualny | API LLM | Pytanie o godziny dziekanatu | Odpowiedź po polsku z URL |
-| T11 | E2E | `cli.main()` | Pytanie spoza zakresu (`retrieve_for_chat()` zwraca pustą listę) | Stały tekst „Nie mam tej informacji…”, brak wywołania LLM |
-| T12 | Integracyjny | `retrieve_for_chat()` | Follow-up „a wnst?” po pytaniu o dziekanat; pytanie w zakresie po kilku spoza zakresu | Oba nieodrzucone, trafne strony w wynikach |
-| T13 | Jednostkowy | `_select()` | Kandydaci z powtórzonym `body_hash` i 4 fragmentami jednej strony | Każda treść raz (najbliższa, przy remisie krótszy URL), ≤ `MAX_PER_URL` na stronę, nadal `k` wyników |
-| T14 | Integracyjny | `ingest._flush()` | Strona z niezmienionymi i jednym nowym fragmentem | Embedding liczony tylko dla nowego, reszta z cache'u (te same wektory) |
-| T15 | Integracyjny | `ingest._flush()` | Fragment, którego treść ma już ponad `BOILERPLATE_URLS` stron | Nie zapisany; wcześniejsze kopie usunięte z `chunks`, hash zostaje w `pages.chunk_hashes` |
-| T16 | Jednostkowy | `_rrf()` | Dwie listy: fragment na 3. miejscu obu i fragment 1. tylko na jednej | Pierwszy wygrywa (2/63 > 1/61); każdy fragment raz, `score` = −Σ 1/(60 + pozycja) |
-| T17 | Integracyjny | `retrieve_hybrid()` | Pytanie ze słowem obecnym tylko w fragmentach dalekich wektorowo; `RETRIEVAL_MODE=foo` | Fragmenty z części pełnotekstowej mają `dist` (próg działa); nieznany tryb → `ValueError` przy imporcie |
-| T18 | Jednostkowy | `rerank()` | Dwa zapytania, 3 fragmenty, cross-encoder zamockowany | Malejąco według `rerank`; każdy fragment ma lepszy z dwóch wyników |
-| T19 | Integracyjny | `retrieve()` z `use_rerank=True` | Pytanie z trafnym fragmentem dalszym niż `MAX_DISTANCE` | Do `TOP_K` wyników z 20 kandydatów; próg na `rerank` (`MIN_RERANK_SCORE`), odległość nie odcina |
+Status: ✅ — zaimplementowany (plik w kolumnie „Test”), ⏳ — planowany.
+
+| ID | Typ | Testowany moduł | Opis | Oczekiwany wynik | Test |
+|---|---|---|---|---|---|
+| T01 | Jednostkowy | `SentenceTransformerEmbedder.embed()` | Weryfikacja kształtu wektora | Lista 1024 floatów | ⏳ (wymaga pobranego modelu) |
+| T02 | Jednostkowy | `build_context()` | Pusta lista fragmentów | String informujący o braku danych | ✅ `unit/test_prompts.py` |
+| T03 | Jednostkowy | `build_context()` | Lista 2 fragmentów z URL | Połączony tekst z nagłówkami `[Źródło: ...]` | ✅ `unit/test_prompts.py` |
+| T04 | Jednostkowy | `build_query()`, `search_queries()` | Historia z kilkoma turami; pierwsze pytanie rozmowy | Sklejone 3 ostatnie pytania użytkownika (bez odpowiedzi bota) + samo pytanie; dla pierwszego pytania jedno zapytanie | ✅ `unit/test_prompts.py` |
+| T05 | Integracyjny | `PgvectorRetriever.search()` | Pytanie z danymi w bazie | Do `k` fragmentów według odległości, kopia treści pod dłuższym URL-em pominięta, ≤ `MAX_PER_URL` z jednej strony; `dist` = odległość kosinusowa | ✅ `integration/test_pgvector_retriever.py` |
+| T06 | Integracyjny | `scrape.crawl()` | Strona zwraca 304 | Status `unchanged`, brak re-embeddingu | ⏳ |
+| T07 | Integracyjny | `ingest._flush()` | Zmieniona strona | Podmiana fragmentów + wpis w `pages` | ⏳ |
+| T08 | E2E | `cli.main()` | Wpisanie `wyjdź` | `sys.exit(0)`, brak wyjątku | ⏳ |
+| T09 | E2E | `cli.main()` | Symulacja błędu bazy | Komunikat błędu, kontynuacja pętli | ⏳ |
+| T10 | Manualny | API LLM | Pytanie o godziny dziekanatu WNP | Odpowiedź po polsku z URL | ⏳ |
+| T11 | Jednostkowy | `ChatService.stream()` | Pytanie spoza zakresu: brak wyników albo wszystkie dalej niż `MAX_DISTANCE` | Zdarzenia `refused` + `done` ze stałym tekstem „Nie mam tej informacji…”, LLM niewywołany | ✅ `unit/test_chat_service.py` |
+| T12 | Jedn. + integr. | `ChatService.retrieve()`, `PgvectorRetriever.search()` | Follow-up „a wnst?” po pytaniu o dziekanat; dwa zapytania naraz | Szukane zapytaniem z historii i samym pytaniem; fragment raz, z lepszym z dwóch wyników | ✅ `unit/test_chat_service.py`, `integration/test_pgvector_retriever.py` |
+| T13 | Jednostkowy | `select()` | Kandydaci z powtórzonym `body_hash` i 4 fragmentami jednej strony | Każda treść raz (najbliższa, przy remisie krótszy URL), ≤ `MAX_PER_URL` na stronę, nadal `k` wyników | ✅ `unit/test_ranking.py` |
+| T14 | Integracyjny | `ingest._flush()` | Strona z niezmienionymi i jednym nowym fragmentem | Embedding liczony tylko dla nowego, reszta z cache'u (te same wektory) | ⏳ |
+| T15 | Integracyjny | `ingest._flush()` | Fragment, którego treść ma już ponad `BOILERPLATE_URLS` stron | Nie zapisany; wcześniejsze kopie usunięte z `chunks`, hash zostaje w `pages.chunk_hashes` | ⏳ |
+| T16 | Jednostkowy | `rrf()` | Dwie listy: fragment na 3. miejscu obu i fragment 1. tylko na jednej | Pierwszy wygrywa (2/63 > 1/61); każdy fragment raz, `score` = −Σ 1/(60 + pozycja) | ✅ `unit/test_ranking.py` |
+| T17 | Integr. + jedn. | `PgvectorRetriever` (`mode="hybrid"`), `Settings` | Pytanie ze skrótem obecnym tylko we fragmencie dalekim wektorowo; `RETRIEVAL_MODE=foo` | Fragment znaleziony tylko w trybie hybrid, ma `dist` (próg działa); nieznany tryb → błąd przy wczytaniu ustawień / tworzeniu retrievera | ✅ `integration/test_pgvector_retriever.py`, `unit/test_config.py` |
+| T18 | Jednostkowy | `rerank()` | Dwa zapytania, 3 fragmenty, atrapa rerankera | Malejąco według `rerank`; każdy fragment ma lepszy z dwóch wyników | ✅ `unit/test_ranking.py` |
+| T19 | Jednostkowy | `RerankingRetriever`, `cutoff()` | 30 kandydatów; trafny fragment dalszy niż `MAX_DISTANCE` | Reranker ocenia 20 kandydatów, zostaje `k`; próg na `rerank` (`MIN_RERANK_SCORE`), odległość nie odcina | ✅ `unit/test_ranking.py`, `unit/test_chat_service.py` |
+| T20 | Jednostkowy | `cutoff()` | Fragmenty z odległością 0.30 / 0.43 / 0.4301; progi `None` | 0.43 przechodzi (≤), 0.4301 odpada; `None` wyłącza próg | ✅ `unit/test_chat_service.py` |
+| T21 | Jednostkowy | `ChatService.stream()` | „Jakie są godziny otwarcia dziekanatu?”; to samo z „WNP”; odpowiedź „Wydział Nauk Przyrodniczych” po dopytaniu | Bez wydziału `clarify` z 7 wydziałami, LLM niewywołany; z wydziałem i po dopytaniu — odpowiedź LLM-a; pytanie spoza zakresu dostaje `refused`, nie `clarify` | ✅ `unit/test_chat_service.py` |
+| T22 | Jednostkowy | `needs_faculty()`, `mentioned_faculties()` | Skróty i nazwy wydziałów (z polskimi znakami i bez), „dziekan”, „urlop dziekański”, wydział sprzed >3 pytań | Wydział rozpoznany po skrócie lub rdzeniu nazwy; „dziekan”/„dziekański” nie wywołują dopytania | ✅ `unit/test_prompts.py` |
+| T23 | Jednostkowy | `ChatService.stream()` | 3 fragmenty z 2 stron, historia z jedną turą | Zdarzenia `sources` → `token`… → `done`; źródła z wyników (każda strona raz); LLM dostaje prompt z kontekstem + historię + pytanie; `done.answer` = sklejone tokeny | ✅ `unit/test_chat_service.py` |
+| T24 | Jednostkowy | `Settings` | Zmienne `TOP_K`, `MAX_DISTANCE`, `DATABASE_URL`, `RERANK=1`/`TRUE`, `RETRIEVAL_MODE=" Hybrid "` | Te same nazwy i interpretacja co `os.getenv` (opcja włączona tylko dla „true”) | ✅ `unit/test_config.py` |
+| T25 | Integracyjny | `PgvectorRetriever` (`old_news_penalty`) | Stara aktualność najbliżej pytania, kara 0.2 | Aktualność spada za strony informacyjne; `dist` bez zmian, `score` = `dist` + kara | ✅ `integration/test_pgvector_retriever.py` |
+| T26 | Integracyjny | `fulltext_query()` | „Gdzie jest dziekanat WNŚiT?”, „Gdzie to jest?” | leksemy `'dziekanat'` i `'wnsit'` połączone OR (bez stop-słów, po unaccent); same stop-słowa → `None` | ✅ `integration/test_pgvector_retriever.py` |
+| T27 | Integracyjny | `ChatService` + `PgvectorRetriever` | Pytanie w zakresie i spoza zakresu na prawdziwej bazie | Źródła z bazy i kontekst w prompcie; spoza zakresu `refused` | ✅ `integration/test_pgvector_retriever.py` |
+| T28 | Integracyjny | `PgvectorRetriever.search()` | `k` = 10 (50 kandydatów > domyślne `hnsw.ef_search` = 40) | 10 wyników | ✅ `integration/test_pgvector_retriever.py` |
 
 ## 6.3 Instrukcja uruchomienia testów
 
 ```bash
-# Instalacja zależności testowych
-pip install pytest pytest-mock
+# Instalacja zależności testowych (pytest, testcontainers)
+pip install -r requirements-dev.txt
 
-# Wszystkie testy
-pytest tests/ -v
+# Wszystkie testy (bez Dockera integracyjne są pomijane)
+pytest
 
-# Testy jednostkowe (bez bazy)
-pytest tests/unit/ -v
+# Testy jednostkowe — bez Dockera, bazy, modeli i serwera LLM (< 1 s)
+pytest tests/unit -v
 
-# Testy integracyjne (wymaga uruchomionego Dockera)
-docker compose up -d db
-pytest tests/integration/ -v
-docker compose down
+# Testy integracyjne — wymagają działającego Dockera (Docker Desktop); testcontainers
+# sam uruchamia i usuwa kontener pgvector/pgvector:pg16 na wolnym porcie
+pytest tests/integration -v
+
+# Wszystko poza integracyjnymi
+pytest -m "not integration"
 ```
+
+Testy integracyjne nie pobierają modelu embeddingów: wektory fragmentów i zapytań są
+przygotowane w `tests/integration/conftest.py` (każdy temat to osobna oś przestrzeni
+1024-wymiarowej), a `FakeEmbedder` zwraca je dla pytań testowych. Pierwsze
+uruchomienie pobiera obraz Dockera (jeśli nie ma go lokalnie); kolejne trwają kilka
+sekund.
 
 ## 6.4 Ewaluacja retrievalu
 
@@ -709,3 +734,15 @@ dłużej niż odpowiedź LLM-a.
 !!! warning "Status"
     Katalog `tests/` jest **planowany** — testy zostaną zaimplementowane w kolejnych
     iteracjach. Powyższe komendy zakładają standardową strukturę pytest.
+
+**Wydzielenie warstw `usbot/`** (2026-11-04; refaktor bez zmiany zachowania, baza jak
+wyżej: 42 330 fragmentów z 12 055 stron). Logika z `cli.py` przeszła do `usbot/core/`
+(ranking, próg, prompt) i `usbot/adapters/` (SQL, modele), a `evaluate.py` korzysta z tych
+samych adapterów (`build_retriever()`). Przed i po refaktorze uruchomiono
+`evaluate.py --threshold-sweep --verbose --out …` w trybach `vector`, `hybrid`,
+`--rerank` oraz `--mode hybrid --rerank --k 1 3 5 8 10 20`: pliki wyników per pytanie
+(URL-e, odległości, wyniki rerankera) są identyczne bajt w bajt, a wydruki — poza paskiem
+ładowania modelu — identyczne. Ścieżkę czatu, której ewaluacja nie obejmuje (dwa
+zapytania, scalanie, próg), porównano osobno: stare `retrieve_for_chat()` i nowe
+`ChatService.retrieve()` dały te same fragmenty (`id`, `dist`, `score`, `rerank`) dla
+107 rozmów (1–3 tury, także follow-upy) w każdym z czterech trybów.

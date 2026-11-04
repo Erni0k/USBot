@@ -1,14 +1,16 @@
 # 3. Dokumentacja API
 
-USBot nie eksponuje własnego API HTTP — aplikacja jest terminalowa. Poniżej opisano
-dwa interfejsy zewnętrzne, z których korzysta: **API modelu LLM** oraz **interfejs
-pgvector**.
+USBot nie eksponuje jeszcze własnego API HTTP — aplikacja jest terminalowa. Poniżej
+opisano dwa interfejsy zewnętrzne, z których korzysta: **API modelu LLM** oraz
+**interfejs pgvector**. Wewnętrzny interfejs dla przyszłej aplikacji webowej —
+`ChatService.stream()` i jego strumień zdarzeń — opisuje [Architektura](architektura.md) (2.1).
 
 ## 3.1 API modelu językowego (OpenAI-compatible)
 
 **Endpoint:** `POST /v1/chat/completions`
 
-Wywoływany przez `openai.OpenAI.chat.completions.create()` w `cli.py`.
+Wywoływany przez `openai.OpenAI.chat.completions.create()` w adapterze
+`usbot/adapters/llm.py` (`OpenAICompatibleLLM`, port `ChatLLM`).
 
 | Parametr | Typ | Wartość | Opis |
 |---|---|---|---|
@@ -21,7 +23,8 @@ Wywoływany przez `openai.OpenAI.chat.completions.create()` w `cli.py`.
 ### System prompt
 
 System prompt ogranicza odpowiedzi do dostarczonego kontekstu i zawiera placeholder
-`{context}` wypełniany wynikami `retrieve()`:
+`{context}` wypełniany wynikami wyszukiwania (`build_system_prompt()` w
+`usbot/core/prompts.py`):
 
 ```text
 Jesteś asystentem Uniwersytetu Śląskiego w Katowicach.
@@ -61,7 +64,8 @@ LIMIT %s;
 -- %s[2] = liczba kandydatów: max(5·TOP_K, 40)
 ```
 
-Z kandydatów zostaje `TOP_K` wyników (`_select()` w `cli.py`): ta sama treść
+Zapytania wykonuje adapter `PgvectorRetriever` (`usbot/adapters/pgvector.py`). Z
+kandydatów zostaje `TOP_K` wyników (`select()` w `usbot/core/ranking.py`): ta sama treść
 (`body_hash`) tylko raz — najbliższy fragment, przy równej odległości ten z krótszym
 URL-em — i najwyżej `MAX_PER_URL` fragmentów z jednej strony. Wyniki pomiaru:
 [Testy](testy.md) (6.4).
@@ -76,18 +80,20 @@ dostają przy sortowaniu `dist + OLD_NEWS_PENALTY` i z kandydatów zostaje `TOP_
 najlepszych. Próg nadal dotyczy samej odległości. Domyślnie kara jest wyłączona —
 uzasadnienie w [Testy](testy.md) (6.4).
 
-Przy `RETRIEVAL_MODE=hybrid` (`retrieve_hybrid()`) obok tego zapytania wykonywane jest
+Przy `RETRIEVAL_MODE=hybrid` (`PgvectorRetriever(mode="hybrid")`) obok tego zapytania wykonywane jest
 wyszukiwanie pełnotekstowe po kolumnie `chunks.content_tsv` (`'simple'` + `unaccent`,
 indeks GIN): słowa pytania bez stop-słów połączone OR, ranking `ts_rank_cd`, ta sama
 liczba kandydatów. Obie listy łączy Reciprocal Rank Fusion (`score = Σ 1/(60 + pozycja)`).
 Każdy wynik ma `dist` liczony z embeddingu, więc próg `MAX_DISTANCE` działa tak samo.
 Domyślnie tryb jest wyłączony — uzasadnienie w [Testy](testy.md) (6.4).
 
-Przy `RERANK=true` z kandydatów `_select()` wybiera 20 (`RERANK_CANDIDATES`), cross-encoder
+Przy `RERANK=true` z kandydatów `select()` wybiera 20 (`RERANK_CANDIDATES`), cross-encoder
 `BAAI/bge-reranker-v2-m3` ocenia pary (pytanie, fragment) i zostaje `TOP_K` z najwyższym
-wynikiem (`rerank()`; w `retrieve_for_chat()` lepszy z wyników dla obu zapytań). Próg
+wynikiem (`RerankingRetriever` i `rerank()` w `usbot/core/ranking.py`; przy dwóch
+zapytaniach czatu lepszy z wyników dla obu). Próg
 działa wtedy na wyniku rerankera (`MIN_RERANK_SCORE`, 0–1), a `MAX_DISTANCE` jest
-pomijany. Model ładowany raz (`get_reranker()`), na GPU w fp16. Wyniki i czasy:
+pomijany (`cutoff()` w `usbot/core/chat.py`). Model ładowany raz, przy pierwszym
+użyciu (`CrossEncoderReranker`, `usbot/adapters/reranker.py`), na GPU w fp16. Wyniki i czasy:
 [Testy](testy.md) (6.4).
 
 !!! tip "Retrieval z kontekstem rozmowy"

@@ -14,33 +14,32 @@ Odpalaj okresowo (np. cron raz dziennie), gdy tresci na stronie sie zmienia.
 """
 import hashlib
 import json
-import os
-
-# Model embeddingow jest cache'owany lokalnie po pierwszym pobraniu -> pracuj offline.
-# Usuwa ostrzezenie o HF Hub i zawieszanie przy starcie. Pierwsze pobranie: HF_HUB_OFFLINE=0.
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
+import sys
+from pathlib import Path
 
 import psycopg
-from dotenv import load_dotenv
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from pgvector.psycopg import register_vector
-from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
 import scrape
 
-load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://chatbot:changeme@localhost:5433/chatbot")
-EMBED_MODEL   = os.getenv("EMBED_MODEL", "BAAI/bge-m3")
-CRAWL_LIMIT   = int(os.getenv("CRAWL_LIMIT", "2000"))
-CRAWL_DEPTH   = int(os.getenv("CRAWL_DEPTH", "2"))
-CRAWL_WORKERS = int(os.getenv("CRAWL_WORKERS", "6"))
-EMBED_BATCH   = int(os.getenv("EMBED_BATCH", "16"))   # ile stron naraz do embeddingu
-CRAWL_FRESH   = os.getenv("CRAWL_FRESH", "false").lower() == "true"
-CRAWL_REFETCH = os.getenv("CRAWL_REFETCH", "false").lower() == "true"  # po zmianie ekstrakcji tekstu
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from usbot.adapters.pgvector import connect  # noqa: E402
+from usbot.bootstrap import build_embedder  # noqa: E402
+from usbot.config import get_settings  # noqa: E402
+
+# Ustawienia (nazwy zmiennych env bez zmian) - opis w usbot/config.py i README
+settings = get_settings()
+DATABASE_URL = settings.database_url
+CRAWL_LIMIT = settings.crawl_limit
+CRAWL_DEPTH = settings.crawl_depth
+CRAWL_WORKERS = settings.crawl_workers
+EMBED_BATCH = settings.embed_batch          # ile stron naraz do embeddingu
+CRAWL_FRESH = settings.crawl_fresh
+CRAWL_REFETCH = settings.crawl_refetch      # po zmianie ekstrakcji tekstu
 # Fragment, ktorego tresc (bez prefiksu) wystepuje na wiecej niz BOILERPLATE_URLS stronach,
 # to boilerplate (przyciski "Udostepnij", same naglowki) - nie trafia do chunks. 0 = wylaczone.
-BOILERPLATE_URLS = int(os.getenv("BOILERPLATE_URLS", "20"))
+BOILERPLATE_URLS = settings.boilerplate_urls
 
 # Wersja podzialu na fragmenty (sekcje, prefiks, rozmiar). Zapisywana w pages.chunker_version;
 # strony zapisane inna wersja sa przy starcie pobierane i embedowane od nowa. Sam hash
@@ -51,7 +50,8 @@ BOILERPLATE_URLS = int(os.getenv("BOILERPLATE_URLS", "20"))
 CHUNKER_VERSION = 2
 
 splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=120)
-model = SentenceTransformer(EMBED_MODEL)
+# Ten sam adapter embeddingow co w cli.py (usbot.adapters.embeddings); model laduje run()
+embedder = build_embedder(settings, load_message=None)
 
 
 def _ensure_schema(conn: psycopg.Connection) -> None:
@@ -287,7 +287,7 @@ def _flush(conn: psycopg.Connection, pending: list[dict]) -> tuple[int, int, int
         ).fetchall())
         missing = {c["content_hash"]: c["content"] for c in keep if c["content_hash"] not in cache}
         if missing:
-            embs = model.encode(list(missing.values()), normalize_embeddings=True, batch_size=64)
+            embs = embedder.embed_batch(list(missing.values()))
             cache.update(zip(missing, embs))
 
         for p in pending:
@@ -313,8 +313,8 @@ def _flush(conn: psycopg.Connection, pending: list[dict]) -> tuple[int, int, int
 
 
 def run() -> None:
-    with psycopg.connect(DATABASE_URL) as conn:
-        register_vector(conn)
+    embedder.load()  # jak dotad: model przed crawlem, blad modelu wychodzi od razu
+    with connect(DATABASE_URL) as conn:
         _ensure_schema(conn)
 
         if CRAWL_FRESH:

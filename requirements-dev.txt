@@ -1,0 +1,4 @@
+# Zależności testów (pytest tests/). Testy integracyjne wymagają działającego Dockera.
+-r requirements.txt
+pytest>=8
+testcontainers[postgres]>=4.8

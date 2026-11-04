@@ -28,11 +28,17 @@ import statistics
 import sys
 from pathlib import Path
 
-import psycopg
+# UTF-8 na Windows (cp1252 nie obsługuje polskich znaków)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from cli import (DATABASE_URL, MAX_DISTANCE, MIN_RERANK_SCORE, RERANK,  # noqa: E402
-                 RETRIEVAL_MODE, TOP_K, retrieve)
+from usbot.adapters.pgvector import distinct_urls  # noqa: E402
+from usbot.bootstrap import build_retriever  # noqa: E402
+from usbot.config import get_settings  # noqa: E402
+
+SETTINGS = get_settings()
+TOP_K = SETTINGS.top_k
 
 QUERIES = Path(__file__).with_name("queries.jsonl")
 
@@ -56,8 +62,7 @@ def load_queries(path: Path) -> list[dict]:
 
 
 def indexed_urls() -> set[str]:
-    with psycopg.connect(DATABASE_URL) as conn:
-        return {norm_url(r[0]) for r in conn.execute("SELECT DISTINCT url FROM chunks")}
+    return {norm_url(u) for u in distinct_urls(SETTINGS.database_url)}
 
 
 def score(ranked_urls: list[str], relevant: dict[str, int], k: int) -> dict:
@@ -143,10 +148,10 @@ def main() -> None:
     ap.add_argument("--threshold-sweep", action="store_true",
                     help=f"pokaż skutki progu MAX_DISTANCE 0.30–0.60, z --rerank także progu na "
                          f"wyniku rerankera (straty liczone w top-TOP_K = {TOP_K})")
-    ap.add_argument("--mode", choices=["vector", "hybrid"], default=RETRIEVAL_MODE,
-                    help=f"tryb wyszukiwania (domyślnie RETRIEVAL_MODE = {RETRIEVAL_MODE})")
-    ap.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=RERANK,
-                    help=f"reranking cross-encoderem (domyślnie RERANK = {RERANK})")
+    ap.add_argument("--mode", choices=["vector", "hybrid"], default=SETTINGS.retrieval_mode,
+                    help=f"tryb wyszukiwania (domyślnie RETRIEVAL_MODE = {SETTINGS.retrieval_mode})")
+    ap.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=SETTINGS.rerank,
+                    help=f"reranking cross-encoderem (domyślnie RERANK = {SETTINGS.rerank})")
     args = ap.parse_args()
 
     queries = load_queries(args.file)
@@ -155,22 +160,25 @@ def main() -> None:
     # Sweep patrzy na tyle fragmentów, ile dostaje LLM — może to być więcej niż max_k
     fetch_k = max(max_k, TOP_K) if args.threshold_sweep else max_k
 
+    # Te same adaptery co w cli.py, ale bez progu odcięcia: Retriever.search() zwraca
+    # wyniki przed progiem, a skutki progu liczy --threshold-sweep.
+    retriever = build_retriever(SETTINGS.model_copy(
+        update={"retrieval_mode": args.mode, "rerank": args.rerank}))
     per_query = []
     for q in queries:
-        chunks = retrieve(q["question"], k=fetch_k, max_distance=None, mode=args.mode,
-                          use_rerank=args.rerank, min_score=None)
-        ranked = [norm_url(c["url"]) for c in chunks]
+        chunks = retriever.search([q["question"]], fetch_k)
+        ranked = [norm_url(c.url) for c in chunks]
         row = {
             "id": q["id"],
             "question": q["question"],
             # Najmniejsza odległość, nie odległość pierwszego wyniku: przy karze za stare
             # aktualności (OLD_NEWS_PENALTY) kolejność nie musi iść według odległości.
-            "top1_dist": min(float(c["dist"]) for c in chunks) if chunks else None,
+            "top1_dist": min(float(c.dist) for c in chunks) if chunks else None,
             "retrieved": ranked,
-            "dists": [round(float(c["dist"]), 4) for c in chunks],
+            "dists": [round(float(c.dist), 4) for c in chunks],
         }
         if args.rerank:
-            row["rerank"] = [round(c["rerank"], 5) for c in chunks]
+            row["rerank"] = [round(c.rerank, 5) for c in chunks]
         if q["relevant"]:
             row["rr"] = reciprocal_rank(ranked[:max_k], q["relevant"])
             row["scores"] = {k: score(ranked, q["relevant"], k) for k in ks}
@@ -211,10 +219,10 @@ def main() -> None:
 
     if args.threshold_sweep:
         threshold_sweep(answerable, out_of_scope, queries, TOP_K, DIST_SCALE,
-                        f"MAX_DISTANCE = {MAX_DISTANCE}")
+                        f"MAX_DISTANCE = {SETTINGS.max_distance}")
         if args.rerank:
             threshold_sweep(answerable, out_of_scope, queries, TOP_K, RERANK_SCALE,
-                            f"MIN_RERANK_SCORE = {MIN_RERANK_SCORE}")
+                            f"MIN_RERANK_SCORE = {SETTINGS.min_rerank_score}")
         if args.verbose:
             print("\nSpoza zakresu wg odległości top-1 (z --rerank także najwyższy wynik rerankera):")
             for r in sorted(out_of_scope, key=lambda r: r["top1_dist"] or 1):

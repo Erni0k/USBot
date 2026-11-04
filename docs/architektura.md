@@ -4,44 +4,104 @@
 
 System składa się z warstw komunikujących się sekwencyjnie. Aplikacja czatu
 (`cli.py`) oraz pipeline ingestii (`ingestion/`) to **dwa niezależne procesy**
-korzystające z tej samej bazy.
+korzystające z tej samej bazy i tych samych adapterów z pakietu `usbot/`.
 
 ```text
-Użytkownik (terminal)
-   │
+Użytkownik (terminal)                       [przyszła aplikacja webowa]
+   │                                                   │
+   ▼                                                   ▼
+ cli.py  (adapter wejścia: input/print, historia)   HTTP/SSE (ten sam strumień zdarzeń)
+   │  ChatService.stream(pytanie, historia)
    ▼
- cli.py ───────────────────────────────────────────────────┐
-   │                                                        │
-   │  build_query()  ──► sklejenie kilku ostatnich pytań    │
-   │  embed(zapytanie) ──► SentenceTransformer              │
-   │                       (BAAI/bge-m3, 1024 dim)          │
-   │  retrieve()     ──► PostgreSQL + pgvector (operator <=>)│
-   │    [hybrid]     ──► + FTS (content_tsv @@), fuzja RRF  │
-   │  _select()      ──► TOP_K bez duplikatów, ≤2 na stronę │
-   │    [RERANK]     ──► 20 kandydatów → CrossEncoder       │
-   │                     (bge-reranker-v2-m3) → TOP_K       │
-   │  _cutoff()      ──► próg MAX_DISTANCE/MIN_RERANK_SCORE │
-   │  build_context()──► string z TOP_K fragmentów          │
-   │  LLM API call   ──► Ollama / vLLM (Qwen3, streaming)    │
-   ▼                                                        │
- Odpowiedź (streaming stdout) ◄─────────────────────────────┘
+ usbot/core/chat.py — ChatService ───────────────────────────────────────────┐
+   │  search_queries()  ──► build_query() (3 ostatnie pytania) + samo pytanie  │
+   │  Retriever.search() ──────────────────────────────┐ (port)               │
+   │  cutoff()          ──► próg MAX_DISTANCE / MIN_RERANK_SCORE               │
+   │     └─ nic nie zostało ──► {"type": "refused"} (bez LLM-a)                │
+   │  needs_faculty()   ──► dziekanat bez wydziału ──► {"type": "clarify"}     │
+   │  {"type": "sources"} — strony z wyników wyszukiwania                      │
+   │  build_system_prompt() ──► prompt z kontekstem                            │
+   │  ChatLLM.stream() ───────────────────────────┐ (port)                     │
+   │  {"type": "token"}… {"type": "done"}         │                            │
+   ▼                                              │                            │
+ adaptery (usbot/adapters/)                       │                            │
+   pgvector.py  PgvectorRetriever ◄───────────────┼──── Retriever              │
+     embed(zapytanie) ──► Embedder (embeddings.py: bge-m3, 1024 dim)           │
+     SQL: <=> (HNSW)  [hybrid: + content_tsv @@, rrf()]                        │
+     merge_best() + select() z usbot/core/ranking.py                           │
+   [RERANK] RerankingRetriever (core/ranking.py) ──► Reranker                  │
+            (reranker.py: CrossEncoder bge-reranker-v2-m3, 20 → TOP_K)         │
+   llm.py       OpenAICompatibleLLM ◄─────────────┴──── ChatLLM                │
+                (Ollama / vLLM, Qwen3, streaming)                              │
+                                                                               │
+ Odpowiedź (streaming stdout) ◄────────────────────────────────────────────────┘
 
- [Oddzielny proces — aktualizacja wiedzy]
+ [Oddzielne procesy — te same adaptery i ustawienia]
  ingestion/ingest.py ──► scrape.crawl()  (BFS, równoległy fetch, 304)
                          chunking po nagłówkach + prefiks tytułu/sekcji
                          pomijanie boilerplate'u (ta sama treść na >20 stronach)
-                         batch embed (cache po content_hash) ──► UPSERT chunks + pages
+                         Embedder.embed_batch (cache po content_hash) ──► UPSERT chunks + pages
+ evaluation/evaluate.py ──► build_retriever() ──► Retriever.search() bez progu ──► metryki
 ```
 
 **Przepływ przy każdym pytaniu:** pytanie (wraz z kontekstem kilku poprzednich tur)
 jest embeddowane lokalnie → zapytanie wektorowe do PostgreSQL zwraca kandydatów (w trybie
 `hybrid` także zapytanie pełnotekstowe; obie listy łączy RRF, a każdy kandydat ma
 odległość wektorową) →
-`_select()` wybiera `TOP_K`: ta sama treść tylko raz, najwyżej `MAX_PER_URL` fragmentów
+`select()` wybiera `TOP_K`: ta sama treść tylko raz, najwyżej `MAX_PER_URL` fragmentów
 z jednej strony (z `RERANK=true`: 20 kandydatów ocenia cross-encoder i zostaje `TOP_K`
 najlepszych) → fragmenty dalsze niż `MAX_DISTANCE` (z rerankingiem: z wynikiem poniżej
-`MIN_RERANK_SCORE`) są odrzucane → kontekst
-wbudowywany jest w system prompt → model LLM generuje odpowiedź strumieniowo.
+`MIN_RERANK_SCORE`) są odrzucane → przy pytaniu o dziekanat bez wydziału bot dopytuje →
+kontekst wbudowywany jest w system prompt → model LLM generuje odpowiedź strumieniowo.
+
+### Warstwy (architektura heksagonalna)
+
+Kod aplikacji jest w pakiecie `usbot/`, podzielonym według kierunku zależności:
+rdzeń nie zna technologii, adaptery znają rdzeń, a składa je jedno miejsce.
+
+| Warstwa | Pliki | Odpowiedzialność | Importuje |
+|---|---|---|---|
+| Rdzeń | `usbot/core/` | `chat.py`: `ChatService` — tura rozmowy jako strumień zdarzeń, próg odcięcia (`cutoff()`); `prompts.py`: prompt systemowy, `build_context()`, `build_query()`; `faculties.py`: dopytywanie o wydział; `ranking.py`: kolejność, `select()`, `rrf()`, `merge_best()`, reranking (`RerankingRetriever`); `models.py`: `Chunk`, `Message` | tylko bibliotekę standardową i `usbot.ports` |
+| Porty | `usbot/ports.py` | Protokoły `Embedder`, `Retriever`, `Reranker`, `ChatLLM` — jedyny sposób, w jaki rdzeń korzysta z otoczenia | `usbot.core.models` |
+| Adaptery | `usbot/adapters/` | `embeddings.py` (SentenceTransformer, bge-m3), `reranker.py` (CrossEncoder), `pgvector.py` (SQL: wektorowe i pełnotekstowe), `llm.py` (API zgodne z OpenAI) | rdzeń, porty, biblioteki zewnętrzne |
+| Konfiguracja | `usbot/config.py` | `Settings` (pydantic-settings): zmienne środowiskowe i `.env`, te same nazwy co wcześniej | pydantic |
+| Składanie | `usbot/bootstrap.py` | `build_retriever()`, `build_chat_service()`… — adaptery według ustawień | wszystko |
+| Wejście | `cli.py`, `evaluation/evaluate.py`, `ingestion/ingest.py` | terminal / metryki / crawl; logikę biorą z `usbot` | `usbot.bootstrap`, `usbot.config` |
+
+Dzięki temu `ChatService` testuje się na atrapach portów, bez bazy, modelu i serwera
+LLM (`tests/unit/`), a adapter pgvector — na prawdziwym Postgresie w kontenerze
+(`tests/integration/`, testcontainers). Aplikacja webowa będzie kolejnym adapterem
+wejścia obok `cli.py`: wywoła `build_chat_service()` i przekaże zdarzenia klientowi
+(np. jako Server-Sent Events).
+
+Ingestia korzysta z `Settings`, adaptera embeddingów (`embed_batch`) i połączenia z
+`usbot/adapters/pgvector.py`; zapis do `chunks`/`pages` (SQL ingestii) został w
+`ingestion/ingest.py`, bo używa go tylko ten proces.
+
+### Strumień zdarzeń `ChatService.stream()`
+
+`ChatService.stream(pytanie, historia)` nie trzyma stanu — historię rozmowy prowadzi
+klient. Każde zdarzenie to słownik gotowy do serializacji JSON:
+
+| Zdarzenie | Kiedy | Pola |
+|---|---|---|
+| `sources` | fragmenty przeszły próg, zaraz zostanie wywołany LLM | `sources`: strony z wyników wyszukiwania (każdy URL raz, z najlepszego fragmentu): `url`, `title`, `page_type`, `published_at`, `dist`, `rerank` |
+| `token` | kolejny kawałek odpowiedzi LLM-a | `text` |
+| `refused` | żaden fragment nie przeszedł progu — bez wywołania LLM-a | `message` (stały tekst „Nie mam tej informacji…”) |
+| `clarify` | pytanie o dziekanat, a w 3 ostatnich pytaniach nie padł wydział — bez wywołania LLM-a | `message`, `options`: `[{"code": "WNP", "name": "Wydział Nauk Przyrodniczych"}, …]` |
+| `done` | zawsze na końcu | `answer`: pełny tekst odpowiedzi, który klient dopisuje do historii |
+
+Źródła są danymi z retrievalu, a nie tekstem wygenerowanym przez LLM — interfejs może
+je pokazać jako linki niezależnie od tego, czy model podał URL w treści. `cli.py`
+wypisuje odpowiedź tak jak przed wydzieleniem warstw (źródeł osobno nie pokazuje).
+
+**Dopytywanie o wydział** (`usbot/core/faculties.py`) rozpoznaje „dziekanat” w ostatnim
+pytaniu (po zamianie na małe litery i usunięciu polskich znaków; „dziekan” i „urlop
+dziekański” się nie liczą) i szuka wydziału — skrótu (`WNP`, `WNŚiT`/`WNST`…) albo
+rdzenia nazwy („przyrodnicz”, „teolog”…) — w 3 ostatnich pytaniach użytkownika.
+Wcześniej dopytywał wyłącznie LLM na podstawie instrukcji w prompcie; instrukcja
+została w prompcie na sformułowania, których reguła nie rozpozna. Próg ma
+pierwszeństwo: pytanie spoza zakresu dostaje `refused`, nie `clarify`.
 
 ## 2.2 Crawler — przepływ ingestii
 
@@ -133,4 +193,12 @@ pliki binarne (PDF, obrazy, archiwa, dokumenty Office, audio/wideo).
 | `httpx` | Pobieranie stron i sitemap (crawler) |
 | `lxml` | Parsowanie XML sitemap i HTML (ekstrakcja linków) |
 | `tqdm` | Pasek postępu ingestii |
-| `python-dotenv` | Wczytywanie konfiguracji z pliku `.env` |
+| `pydantic-settings` | Ustawienia (`usbot/config.py`) ze zmiennych środowiskowych i pliku `.env` |
+| `python-dotenv` | Parsowanie pliku `.env` (używane przez pydantic-settings) |
+
+### Zależności testów (`requirements-dev.txt`)
+
+| Pakiet | Rola |
+|---|---|
+| `pytest` | Testy jednostkowe i integracyjne (`tests/`) |
+| `testcontainers[postgres]` | Kontener `pgvector/pgvector:pg16` dla testów integracyjnych |
