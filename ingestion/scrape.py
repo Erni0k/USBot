@@ -107,6 +107,18 @@ _SKIP_PATTERNS = ("/wp-json", "/wp-content/", "/wp-includes/", "xmlrpc.php", "/f
 _BOILERPLATE_XPATH = ('//*[@id="cmplz-cookiebanner-container"]'
                       ' | //*[contains(@class, "cmplz-") and not(contains(@class, "cmplz-document"))]'
                       ' | //header | //footer | //nav | //script | //style | //noscript')
+# Tekst niewidoczny dla czytelnika strony: atrybut hidden, aria-hidden="true", styl
+# inline display:none / visibility:hidden, <template> i komentarze HTML. Taki tekst
+# moglby przemycic do kontekstu LLM-a polecenia (prompt injection), ktorych student na
+# stronie nie widzi. Audyt 167 stron (docs/architektura.md, „Bezpieczenstwo”): w <main>
+# nie bylo ukrytego tekstu poza komentarzami; poza <main> - pasek COVID w stopce
+# (display:none), ktory trafial do tekstu stron bez <main>. Klasy CSS ukrywajace tresc
+# (np. zwijane panele) nie sa tu rozpoznawane - tresc po rozwinieciu jest widoczna.
+_HIDDEN_XPATH = ('//*[@hidden] | //*[@aria-hidden="true"] | //template | //comment()'
+                 ' | //*[contains(translate(translate(@style, " ", ""), "DISPLAYNOE",'
+                 ' "displaynoe"), "display:none")]'
+                 ' | //*[contains(translate(translate(@style, " ", ""), "VISBLITYHDEN",'
+                 ' "visblityhden"), "visibility:hidden")]')
 _HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 _BLOCK_TAGS = ("p", "div", "li", "tr", "br", "section", "article", "table", "ul", "ol",
                *_HEADING_TAGS)
@@ -279,6 +291,17 @@ class Extracted(NamedTuple):
     published_at: datetime | None
 
 
+def remove_hidden(tree) -> None:
+    """Usuwa z drzewa elementy niewidoczne dla czytelnika (_HIDDEN_XPATH).
+
+    Tekst po usunietym elemencie (tail) zostaje - nalezy do rodzica i jest widoczny.
+    Elementy zagniezdzone w juz usunietych pomijamy.
+    """
+    for el in tree.xpath(_HIDDEN_XPATH):
+        if el.getparent() is not None:
+            el.drop_tree()
+
+
 def _extract(content: bytes, url: str) -> Extracted:
     """Wyciaga tresc i metadane strony.
 
@@ -300,6 +323,7 @@ def _extract(content: bytes, url: str) -> Extracted:
     page_type = _page_type(url, tree)
     for el in tree.xpath(_BOILERPLATE_XPATH):
         el.drop_tree()
+    remove_hidden(tree)
     main = tree.xpath("//main")
     if main:
         html = f"<html><body>{lxml_html.tostring(main[0], encoding='unicode')}</body></html>"
