@@ -17,4 +17,6 @@ site/
 
 .DS_Store
 
+# notatki robocze
+prompty-rozwoju.md
 .pytest_cache/
