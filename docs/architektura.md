@@ -2,16 +2,18 @@
 
 ## 2.1 Schemat blokowy
 
-System składa się z warstw komunikujących się sekwencyjnie. Aplikacja czatu
-(`cli.py`) oraz pipeline ingestii (`ingestion/`) to **dwa niezależne procesy**
-korzystające z tej samej bazy i tych samych adapterów z pakietu `usbot/`.
+System składa się z warstw komunikujących się sekwencyjnie. Aplikacja czatu —
+terminalowa (`cli.py`) albo API HTTP dla strony WWW (`usbot/api/`) — oraz pipeline
+ingestii (`ingestion/`) to **niezależne procesy** korzystające z tej samej bazy i tych
+samych adapterów z pakietu `usbot/`.
 
 ```text
-Użytkownik (terminal)                       [przyszła aplikacja webowa]
-   │                                                   │
+Użytkownik (terminal)                       Przeglądarka (strona WWW)
+   │                                                   │ POST /api/chat {message, history}
    ▼                                                   ▼
- cli.py  (adapter wejścia: input/print, historia)   HTTP/SSE (ten sam strumień zdarzeń)
-   │  ChatService.stream(pytanie, historia)
+ cli.py  (input/print, historia w pamięci)   usbot/api/ (FastAPI: walidacja, SSE, lifespan)
+   │                                                   │ wątek + kolejka → event: … data: {…}
+   │  ChatService.stream(pytanie, historia)  ◄─────────┘ (historia od klienta, N ostatnich tur)
    ▼
  usbot/core/chat.py — ChatService ───────────────────────────────────────────┐
    │  search_queries()  ──► build_query() (3 ostatnie pytania) + samo pytanie  │
@@ -66,13 +68,12 @@ rdzeń nie zna technologii, adaptery znają rdzeń, a składa je jedno miejsce.
 | Adaptery | `usbot/adapters/` | `embeddings.py` (SentenceTransformer, bge-m3), `reranker.py` (CrossEncoder), `pgvector.py` (SQL: wektorowe i pełnotekstowe), `llm.py` (API zgodne z OpenAI) | rdzeń, porty, biblioteki zewnętrzne |
 | Konfiguracja | `usbot/config.py` | `Settings` (pydantic-settings): zmienne środowiskowe i `.env`, te same nazwy co wcześniej | pydantic |
 | Składanie | `usbot/bootstrap.py` | `build_retriever()`, `build_chat_service()`… — adaptery według ustawień | wszystko |
-| Wejście | `cli.py`, `evaluation/evaluate.py`, `ingestion/ingest.py` | terminal / metryki / crawl; logikę biorą z `usbot` | `usbot.bootstrap`, `usbot.config` |
+| Wejście | `cli.py`, `usbot/api/`, `evaluation/evaluate.py`, `ingestion/ingest.py` | terminal / HTTP (SSE) / metryki / crawl; logikę biorą z `usbot` | `usbot.bootstrap`, `usbot.config` (API także `usbot.core` — typy zdarzeń, lista wydziałów) |
 
 Dzięki temu `ChatService` testuje się na atrapach portów, bez bazy, modelu i serwera
 LLM (`tests/unit/`), a adapter pgvector — na prawdziwym Postgresie w kontenerze
-(`tests/integration/`, testcontainers). Aplikacja webowa będzie kolejnym adapterem
-wejścia obok `cli.py`: wywoła `build_chat_service()` i przekaże zdarzenia klientowi
-(np. jako Server-Sent Events).
+(`tests/integration/`, testcontainers). API HTTP (`usbot/api/`) jest kolejnym adapterem
+wejścia obok `cli.py` i nie zawiera logiki rozmowy — opis niżej.
 
 Ingestia korzysta z `Settings`, adaptera embeddingów (`embed_batch`) i połączenia z
 `usbot/adapters/pgvector.py`; zapis do `chunks`/`pages` (SQL ingestii) został w
@@ -94,6 +95,32 @@ klient. Każde zdarzenie to słownik gotowy do serializacji JSON:
 Źródła są danymi z retrievalu, a nie tekstem wygenerowanym przez LLM — interfejs może
 je pokazać jako linki niezależnie od tego, czy model podał URL w treści. `cli.py`
 wypisuje odpowiedź tak jak przed wydzieleniem warstw (źródeł osobno nie pokazuje).
+
+### API HTTP (`usbot/api/`)
+
+| Plik | Rola |
+|---|---|
+| `main.py` | `create_app()`: endpointy `POST /api/chat`, `GET /api/health`, `GET /api/faculties`, CORS, lifespan; `app` dla `uvicorn usbot.api.main:app` |
+| `resources.py` | `build_resources()`: przy starcie ładuje model embeddingów (i reranker), otwiera pulę `psycopg_pool`, tworzy klienta LLM-a i `ChatService`; sprawdzenia dla `/api/health` |
+| `sse.py` | `stream_events()`: zdarzenia `ChatService` → Server-Sent Events; błędy adapterów → zdarzenie `error` z kodem |
+| `schemas.py` | modele żądań i odpowiedzi (pydantic) i limity wielkości żądania |
+
+Serwer jest bezstanowy: historię przysyła klient, a `ChatService` (parametr
+`max_history_turns`, zmienna `API_HISTORY_TURNS`) bierze z niej tylko ostatnie tury —
+przycinanie jest w rdzeniu (`recent_turns()`), API przekazuje historię bez zmian.
+`ChatService.stream()` jest zwykłym generatorem, a adaptery blokują (SQL, model na GPU,
+HTTP do LLM-a), więc `stream_events()` uruchamia go w wątku i przekazuje zdarzenia do
+pętli asyncio przez kolejkę. Po rozłączeniu klienta ustawia flagę zatrzymania: wątek
+kończy pętlę przy najbliższym zdarzeniu i zamyka generator, co zamyka strumień HTTP do
+LLM-a (`OpenAICompatibleLLM.stream()` zamyka go w `finally`) — serwer modelu przestaje
+generować. Modele są współdzielone przez wątki i chronione blokadą (embedding pytania
+trwa ~20 ms).
+
+Limity czasu: `LLM_TIMEOUT` (połączenie z LLM-em i każdy kolejny fragment odpowiedzi; API
+nie ponawia zapytań), `DB_TIMEOUT` (połączenie z puli, nawiązanie połączenia,
+`statement_timeout`), `HEALTH_TIMEOUT` (każde sprawdzenie w `/api/health`). Połączenia z
+puli są wielokrotnego użytku, więc `PgvectorRetriever` ustawia `hnsw.ef_search` przez
+`SET LOCAL` — tylko w transakcji jednego wyszukiwania. Kontrakt: [API](api.md) (3.1).
 
 **Dopytywanie o wydział** (`usbot/core/faculties.py`) rozpoznaje „dziekanat” w ostatnim
 pytaniu (po zamianie na małe litery i usunięciu polskich znaków; „dziekan” i „urlop
@@ -201,6 +228,9 @@ pliki binarne (PDF, obrazy, archiwa, dokumenty Office, audio/wideo).
 | `lxml` | Parsowanie XML sitemap i HTML (ekstrakcja linków) |
 | `tqdm` | Pasek postępu ingestii |
 | `pydantic-settings` | Ustawienia (`usbot/config.py`) ze zmiennych środowiskowych i pliku `.env` |
+| `fastapi` | API HTTP (`usbot/api/`): endpointy, walidacja żądań, strumień SSE |
+| `uvicorn` | Serwer ASGI uruchamiający API |
+| `psycopg[pool]` (`psycopg-pool`) | Pula połączeń z bazą dla API |
 | `python-dotenv` | Parsowanie pliku `.env` (używane przez pydantic-settings) |
 
 ### Zależności testów (`requirements-dev.txt`)
@@ -209,3 +239,4 @@ pliki binarne (PDF, obrazy, archiwa, dokumenty Office, audio/wideo).
 |---|---|
 | `pytest` | Testy jednostkowe i integracyjne (`tests/`) |
 | `testcontainers[postgres]` | Kontener `pgvector/pgvector:pg16` dla testów integracyjnych |
+| `httpx` (z `requirements.txt`) | `fastapi.testclient.TestClient` w testach API |

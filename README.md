@@ -27,7 +27,8 @@ us-chatbot/
 │   ├── config.py       # ustawienia z env i .env (pydantic-settings)
 │   ├── ports.py        # interfejsy: Embedder, Retriever, Reranker, ChatLLM
 │   ├── core/           # ChatService (strumień zdarzeń), próg, prompt, dopytywanie, ranking
-│   ├── adapters/       # bge-m3, cross-encoder, pgvector (vector/hybrid), API OpenAI
+│   ├── adapters/       # bge-m3, cross-encoder, pgvector (vector/hybrid, pula), API OpenAI
+│   ├── api/            # FastAPI: POST /api/chat (SSE), /api/health, /api/faculties
 │   └── bootstrap.py    # składanie adapterów według ustawień
 ├── tests/              # pytest: unit/ (atrapy portów), integration/ (testcontainers)
 ├── requirements.txt    # zależności Python
@@ -37,6 +38,7 @@ us-chatbot/
 │   └── scrape.py       # inkrementalny crawler BFS (stały pool żądań, limit na domenę)
 ├── evaluation/
 │   ├── evaluate.py     # metryki retrievalu: Hit/Recall/Precision/nDCG@k, MRR, dobór progu (odległość / reranker)
+│   ├── latency.py      # czas do pierwszego tokenu i całkowity przez API
 │   └── queries.jsonl   # pytania testowe z oznaczonymi URL-ami
 ├── infra/              # init.sql (pgvector, unaccent, tabele chunks i pages)
 ├── docker-compose.yml  # baza Postgres + opcjonalnie vLLM
@@ -62,12 +64,12 @@ pip install -r requirements.txt
 **Ollama (zalecane):**
 ```bash
 ollama pull qwen3:8b      # mocniejszy; dla słabszego sprzętu: qwen3:4b lub qwen3:1.7b
-ollama serve              # endpoint: http://localhost:11434/v1
+ollama serve              # endpoint: http://127.0.0.1:11434/v1
 ```
 
 W `.env`:
 ```
-LLM_BASE_URL=http://localhost:11434/v1
+LLM_BASE_URL=http://127.0.0.1:11434/v1
 LLM_MODEL=qwen3:8b
 ```
 
@@ -224,8 +226,31 @@ Wpisz pytanie i naciśnij Enter. Wyjście: `wyjdź` lub Ctrl+C.
 
 `cli.py` to tylko pętla terminala: odpowiedź liczy `ChatService` z `usbot/core/chat.py`
 i zwraca ją jako strumień zdarzeń (`sources`, `token`, `refused`, `clarify`, `done`) —
-ten sam, z którego skorzysta aplikacja webowa. Opis warstw i zdarzeń:
+ten sam, który API HTTP wysyła przeglądarce. Opis warstw i zdarzeń:
 `docs/architektura.md` (2.1).
+
+### API HTTP (strona WWW)
+
+```bash
+uvicorn usbot.api.main:app --host 127.0.0.1 --port 8000
+```
+
+- `POST /api/chat` — body `{"message": "...", "history": [{"role": "user", "content": "..."}, …]}`,
+  odpowiedź jako Server-Sent Events: `sources`, `token`, `done`, `refused`, `clarify`, `error`.
+  Serwer jest bezstanowy: historię przysyła klient, serwer bierze z niej `API_HISTORY_TURNS`
+  ostatnich tur.
+- `GET /api/health` — baza, model embeddingów (i reranker), LLM; `200` albo `503`.
+- `GET /api/faculties` — wydziały (np. przyciski po `clarify`).
+
+```bash
+curl -N http://127.0.0.1:8000/api/chat -H 'Content-Type: application/json' \
+  -d '{"message": "Jak połączyć się z siecią eduroam?", "history": []}'
+```
+
+Modele, pula połączeń z bazą i klient LLM-a ładują się raz, przy starcie (kilkadziesiąt
+sekund). Rozłączenie klienta przerywa generowanie. Przy vLLM na porcie 8000 uruchom API
+na innym (`--port 8080`). Kontrakt, kody błędów, przykład klienta w JS i czasy odpowiedzi:
+`docs/api.md` (3.1–3.2).
 
 ## Testy
 
@@ -288,7 +313,7 @@ nie trafiają do `os.environ` — zmienne bibliotek (np. `HF_HOME`) ustaw w śro
 | Zmienna | Opis | Domyślnie |
 |---|---|---|
 | `DATABASE_URL` | połączenie do Postgresa | `...@localhost:5433/chatbot` |
-| `LLM_BASE_URL` | endpoint modelu (OpenAI-compatible) | `http://localhost:11434/v1` |
+| `LLM_BASE_URL` | endpoint modelu (OpenAI-compatible) | `http://127.0.0.1:11434/v1` |
 | `LLM_MODEL` | nazwa modelu w Ollama/vLLM | `qwen3:8b` |
 | `EMBED_MODEL` | model embeddingów | `BAAI/bge-m3` |
 | `TOP_K` | ile fragmentów z bazy trafia do kontekstu | `8` |
@@ -301,7 +326,14 @@ nie trafiają do `os.environ` — zmienne bibliotek (np. `HF_HOME`) ustaw w śro
 | `RERANK_MODEL` | model rerankera (cross-encoder) | `BAAI/bge-reranker-v2-m3` |
 | `MIN_RERANK_SCORE` | przy `RERANK=true` próg zamiast `MAX_DISTANCE`: min. wynik rerankera (0–1) fragmentu | `0.01` |
 | `BOILERPLATE_URLS` | fragment o tej samej treści na więcej stronach to boilerplate i nie trafia do bazy; `0` = wyłączone | `20` |
-| `ENABLE_THINKING` | tryb rozumowania Qwen3 (wolniejszy) | `false` |
+| `ENABLE_THINKING` | tryb rozumowania Qwen3 (wolniejszy); Ollama go ignoruje | `false` |
+| `LLM_REASONING_EFFORT` | wysyłane jako `reasoning_effort`; na Ollamie `none` wyłącza rozumowanie Qwen3 (szybszy pierwszy token, `docs/api.md` 3.2); nie ustawiaj dla vLLM | puste |
+| `LLM_TIMEOUT` | limit (s) na połączenie z LLM-em i każdy kolejny fragment odpowiedzi | `60` |
+| `API_HISTORY_TURNS` | API: ile ostatnich tur historii klienta trafia do `ChatService` | `5` |
+| `API_CORS_ORIGINS` | API: dozwolone originy CORS po przecinku; puste = bez CORS | puste |
+| `DB_POOL_MIN` / `DB_POOL_MAX` | API: rozmiar puli połączeń z bazą | `1` / `4` |
+| `DB_TIMEOUT` | API: limit (s) na połączenie z puli, nawiązanie połączenia i jedno zapytanie | `10` |
+| `HEALTH_TIMEOUT` | API: limit (s) jednego sprawdzenia w `/api/health` | `3` |
 | `CRAWL_LIMIT` | maks. liczba stron na jeden crawl | `6000` |
 | `CRAWL_DEPTH` | głębokość BFS (0 = tylko sitemap + seedy) | `3` |
 | `CRAWL_WORKERS` | równoległe requesty HTTP (usnet: maks. 2) | `6` |

@@ -54,7 +54,7 @@ pip install -r requirements.txt
 ollama pull qwen3:8b
 ollama serve
 # W .env ustaw:
-#   LLM_BASE_URL=http://localhost:11434/v1
+#   LLM_BASE_URL=http://127.0.0.1:11434/v1
 #   LLM_MODEL=qwen3:8b
 ```
 
@@ -84,6 +84,38 @@ Wpisz pytanie i naciśnij Enter. Wyjście: `wyjdź` lub `Ctrl+C`.
     Zanim odpalisz bota, upewnij się, że **Ollama działa** (`ollama serve`) oraz
     **baza jest wstała** (`docker compose up -d db`).
 
+### Krok 7b — API HTTP dla strony WWW (zamiast terminala)
+
+```bash
+uvicorn usbot.api.main:app --host 127.0.0.1 --port 8000
+```
+
+Serwer przy starcie ładuje model embeddingów (z `RERANK=true` także reranker), otwiera
+pulę połączeń z bazą i tworzy klienta LLM-a — to trwa kilkanaście–kilkadziesiąt sekund;
+gotowość sygnalizuje linia `Application startup complete`. Sprawdzenie:
+
+```bash
+curl http://127.0.0.1:8000/api/health        # "status": "ok" i 200, gdy baza, model i LLM działają
+curl -N http://127.0.0.1:8000/api/chat -H 'Content-Type: application/json' \
+  -d '{"message": "Jak połączyć się z siecią eduroam?", "history": []}'
+```
+
+- Przy vLLM na porcie 8000 uruchom API na innym porcie: `--port 8080`.
+- Na Windows ustaw w `.env` `LLM_BASE_URL=http://127.0.0.1:11434/v1` — z `localhost`
+  każde nowe połączenie z Ollamą czeka ~2–3 s na nieudaną próbę przez IPv6.
+- Na Ollamie `ENABLE_THINKING=false` nie wyłącza rozumowania Qwen3; zrób to przez
+  `LLM_REASONING_EFFORT=none` (pierwszy token kilka razy szybciej — [API](api.md), 3.2).
+- `--host 0.0.0.0` udostępnia API w sieci. API nie ma uwierzytelniania ani limitu
+  zapytań — wystaw je za reverse proxy (np. nginx; strumienia SSE nie buforuj, serwer
+  wysyła `X-Accel-Buffering: no`).
+- Frontend z innego originu (np. serwer deweloperski na `:5173`) wymaga
+  `API_CORS_ORIGINS=http://localhost:5173`.
+- `--workers N` uruchamia N procesów, każdy z własną kopią modeli (bge-m3 ~2 GB pamięci GPU
+  na proces). W jednym procesie żądania obsługują wątki: embedding i reranking idą po
+  kolei (blokada na modelu), a równoległe odpowiedzi LLM-a obsługuje serwer modelu.
+
+Kontrakt endpointów i format zdarzeń SSE: [Dokumentacja API](api.md) (3.1).
+
 ### Krok 8 — Testy (opcjonalnie)
 
 ```bash
@@ -92,6 +124,7 @@ pytest tests/unit          # bez Dockera, bazy i modeli
 pytest tests/integration   # wymaga działającego Dockera (testcontainers)
 ```
 
+Testy API (`tests/unit/test_api.py`) działają na atrapach — bez serwera, bazy i LLM-a.
 Testy integracyjne same uruchamiają tymczasowy kontener `pgvector/pgvector:pg16` —
 baza z kroku 5 nie jest potrzebna. Szczegóły: [Testy](testy.md) (6.3).
 
