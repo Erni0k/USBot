@@ -12,7 +12,8 @@ Odpowiedź to strumień zdarzeń (słowników gotowych do JSON-a, np. dla SSE/We
 (przy `refused`/`clarify` — ich `message`). Źródła pochodzą z wyników wyszukiwania,
 nie z tekstu LLM-a. ChatService nie trzyma stanu rozmowy — historię prowadzi klient.
 """
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from datetime import date
 from typing import Literal, TypedDict
 
 from usbot.core.faculties import CLARIFY_MESSAGE, expand_faculties, faculty_options, needs_faculty
@@ -100,7 +101,8 @@ class ChatService:
 
     def __init__(self, retriever: Retriever, llm: ChatLLM, *, top_k: int,
                  max_distance: float | None, min_rerank_score: float | None,
-                 max_history_turns: int | None = None) -> None:
+                 max_history_turns: int | None = None,
+                 today: Callable[[], date] = date.today) -> None:
         self.retriever = retriever
         self.llm = llm
         self.top_k = top_k
@@ -108,6 +110,8 @@ class ChatService:
         self.min_rerank_score = min_rerank_score
         # None = cała historia (cli.py); API przycina do API_HISTORY_TURNS tur
         self.max_history_turns = max_history_turns
+        # Dzisiejsza data do promptu (aktualność komunikatów); w testach — stała data
+        self.today = today
 
     def retrieve(self, messages: Sequence[Message]) -> list[Chunk]:
         """Fragmenty dla ostatniego pytania w `messages`, po progu odcięcia.
@@ -143,7 +147,7 @@ class ChatService:
             return
 
         yield {"type": "sources", "sources": sources(chunks)}
-        prompt: list[Message] = [{"role": "system", "content": build_system_prompt(chunks)},
+        prompt: list[Message] = [{"role": "system", "content": build_system_prompt(chunks, self.today())},
                                  *messages]
         parts: list[str] = []
         for text in self.llm.stream(prompt):

@@ -172,3 +172,12 @@ def test_wyjatek_retrievera_przechodzi_do_klienta():
     svc = ChatService(Broken(), FakeLLM(), top_k=5, max_distance=0.43, min_rerank_score=0.01)
     with pytest.raises(ConnectionError):
         events(svc, "Jak skonfigurować eduroam?")
+
+
+def test_dzisiejsza_data_z_zegara_trafia_do_promptu():
+    from datetime import date
+    retriever, llm = FakeRetriever([chunk(1, dist=0.3)]), FakeLLM(["ok"])
+    svc = ChatService(retriever, llm, top_k=5, max_distance=0.43, min_rerank_score=0.01,
+                      today=lambda: date(2027, 2, 10))
+    list(svc.stream("Jak skonfigurować eduroam?"))
+    assert "Dzisiaj jest 2027-02-10, trwa rok akademicki 2026/2027" in llm.calls[0][0]["content"]

@@ -156,3 +156,45 @@ def test_znacznik_context_w_tresci_nie_zamyka_kontekstu(payload):
 def test_pusty_kontekst_tez_w_znacznikach():
     _, inside, _ = _context_part(build_system_prompt([]))
     assert "brak pasujących informacji" in inside
+
+
+# --- aktualność: data publikacji komunikatów i dzisiejsza data ---
+
+def _dated(id, page_type, when):
+    c = chunk(id, url=f"https://us.edu.pl/{id}/", page_type=page_type)
+    c.published_at = when
+    return c
+
+
+def test_data_publikacji_tylko_przy_komunikatach_i_wydarzeniach():
+    from datetime import datetime
+    ctx = build_context([
+        _dated(1, "news", datetime(2024, 10, 22, 9, 30)),
+        _dated(2, "event", datetime(2018, 5, 14)),
+        _dated(3, "student", datetime(2019, 11, 1)),   # strona informacyjna: bez daty
+        _dated(4, "news", None),
+    ])
+    assert "[Źródło: https://us.edu.pl/1/ | komunikat z 2024-10-22]" in ctx
+    assert "[Źródło: https://us.edu.pl/2/ | wydarzenie z 2018-05-14]" in ctx
+    assert "[Źródło: https://us.edu.pl/3/]\n" in ctx and "2019" not in ctx
+    assert "[Źródło: https://us.edu.pl/4/]\n" in ctx
+
+
+@pytest.mark.parametrize("today, expected", [
+    ("2026-11-04", "2026/2027"), ("2026-10-01", "2026/2027"), ("2027-03-01", "2026/2027"),
+    ("2027-09-30", "2026/2027"), ("2026-09-30", "2025/2026"),
+])
+def test_rok_akademicki(today, expected):
+    from datetime import date
+    from usbot.core.prompts import academic_year
+    assert academic_year(date.fromisoformat(today)) == expected
+
+
+def test_prompt_zna_dzisiejsza_date_i_regule_o_starych_komunikatach():
+    from datetime import date
+    prompt = build_system_prompt([chunk(1)], today=date(2026, 11, 4))
+    assert "Dzisiaj jest 2026-11-04, trwa rok akademicki 2026/2027" in prompt
+    assert "przedstawiaj ich jako obecnie obowiązujących" in prompt
+    assert "przytaczaj je dokładnie tak, jak są napisane" in prompt
+    before, _, _ = _context_part(prompt)
+    assert "AKTUALNOŚĆ INFORMACJI" in before  # reguła przed kontekstem
