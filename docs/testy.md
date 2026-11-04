@@ -65,6 +65,8 @@ Status: ✅ — zaimplementowany (plik w kolumnie „Test”), ⏳ — planowany
 | T40 | Jednostkowy | CORS, nagłówki, `/docs`, `/api/health` | Preflight z dozwolonego i obcego originu; `API_CORS_ORIGINS="*"`; odpowiedzi 200/422/404/SSE; błąd bazy z hostem i użytkownikiem w komunikacie | `Access-Control-Allow-Origin` tylko dla frontendu, `*` odrzucone przy starcie; nagłówki bezpieczeństwa i `no-store` w każdej odpowiedzi; `/docs` 404 bez `API_DOCS`; health bez hosta i użytkownika | ✅ `unit/test_api_security.py` |
 | T41 | Jednostkowy | `ChatLog`, `redact()`, `DailySalt`, filtr logów | Pytanie z e-mailem, telefonem, albumem, PESEL-em z adresu 203.0.113.7; odpowiedź ok, `refused`, `clarify`, `error`; pliki sprzed 30+ dni; rekord access logu uvicorna i slowapi | W pliku dnia brak IP, danych z pytania i treści odpowiedzi; poprawne `outcome`, źródła, odległości, czasy; ten sam skrót klienta w ciągu dnia, inny następnego; stare pliki usunięte (też przy starcie); IP usunięte z logów | ✅ `unit/test_api_security.py` |
 | T42 | Manualny | prompt + `qwen3:8b` (Ollama), `evaluation/injection.py` | Polecenie w treści strony (wprost i zakamuflowane), polecenie w pytaniu, prośba o ujawnienie promptu; serie po 5 odpowiedzi | Polecenie wprost w treści strony nie działa (0/25); wyniki i ryzyko szczątkowe w Architektura (2.4) | ✅ (2026-11-04) |
+| T43 | Jednostkowy | `build_context()`, `build_system_prompt()`, `academic_year()`, `ChatService(today=…)` | Komunikat i wydarzenie z datą, strona `student` z datą, komunikat bez daty; daty graniczne roku akademickiego; zegar ustawiony na 2027-02-10 | Data tylko przy `news`/`event` (`komunikat z RRRR-MM-DD`); rok akademicki zmienia się 1 października; dzisiejsza data i reguła o aktualności w prompcie przed kontekstem | ✅ `unit/test_prompts.py`, `unit/test_chat_service.py` |
+| T44 | Manualny | odpowiedzi bota (`qwen3:8b`) | 80 pytań z odpowiedziami wzorcowymi; A/B daty publikacji (3 powtórzenia) | Wyniki i przyczyny błędów w 6.5 | ✅ (2026-11-04) |
 | T35 | Manualny | API + Ollama | `curl -N` na `/api/chat`, przerwanie curla w trakcie, `/api/health`; `evaluation/latency.py` | Tokeny na bieżąco, źródła przed tokenami; w logu serwera „przerwano odpowiedź”; czasy w docs/api.md (3.2) | ✅ (2026-11-04) |
 
 ## 6.3 Instrukcja uruchomienia testów
@@ -808,3 +810,88 @@ Prawa i Administracji”, inauguracje), które spychają stronę dziekanatu. Dom
 zmienia tylko jedno (`skrot-wnsit`: „Gdzie jest dziekanat WNŚiT?”); Hit@1 tych pytań na
 ścieżce czatu (z progiem) bez zmian w `vector`, `vector + rerank`, `hybrid`
 (0.419 / 0.405 / 0.365), w `hybrid + rerank` 0.392 → 0.405.
+
+## 6.5 Test odpowiedzi: 80 pytań z odpowiedziami wzorcowymi
+
+2026-11-04. Zestaw 80 pytań studenckich w 10 kategoriach (podstawowe informacje,
+organizacja studiów, egzaminy, USOSweb, dziekanat, stypendia, praktyki i dyplom, życie
+studenckie, pytania potoczne, pytania trudne) z odpowiedziami wzorcowymi i źródłami,
+przygotowany ręcznie (stan informacji na 04.11.2026). Każde pytanie zadane raz, bez
+historii, przez `ChatService` — tę samą ścieżkę co API. Konfiguracja: `qwen3:8b`
+(Ollama, `LLM_REASONING_EFFORT=none`), `RETRIEVAL_MODE=vector`, bez rerankingu,
+`TOP_K=8`, `MAX_DISTANCE=0.43`, baza 42 330 fragmentów. Mediana czasu odpowiedzi: 5 s.
+Ocena ręczna — porównanie z odpowiedzią wzorcową (wzorce nie były weryfikowane osobno na
+stronach uczelni):
+
+| Ocena | Przed zmianą | Po zmianie (data publikacji w kontekście) |
+|---|---|---|
+| ✅ poprawna (zgodna ze wzorcem albo słuszna odmowa) | 37 | 38 |
+| 🟡 częściowa / ogólnikowa / poprawna, ale nieaktualna z adnotacją | 18 | 20 |
+| ❌ błędna | 11 | 11 |
+| ⛔ „Nie mam tej informacji”, choć wzorzec ma odpowiedź | 14 | 11 |
+
+Najlepiej: dziekanat i administracja (7/8 poprawnych), podstawowe informacje (6/8), pytania
+trudne i odporność (6/8 — m.in. odmowa podania hasła administratora i prywatnego telefonu,
+brak „pamięci” poprzednich rozmów). Najsłabiej: egzaminy i oceny (0/8 w pełni poprawnych)
+i pytania potoczne (1/8).
+
+Przyczyny błędów i odmów:
+
+1. **Brak stron w bazie.** Z 44 źródeł wzorcowych tylko 19 jest w bazie (trafione w
+   wynikach: 10). Crawler nie pobiera `rekrutacja.us.edu.pl` (kierunki, opłaty, praktyki
+   na kierunkach, akademiki), `usosweb`, `ciniba.edu.pl`, `erasmus`, `cwfis`, `apd`, `ab`,
+   `spinplace`; brakuje też części stron `us.edu.pl` (praktyki i koła naukowe WNŚiT, zasady
+   lektoratów, komunikat z 3.11.2026 o stypendiach). Do zrobienia przy ingestii (wstrzymane).
+2. **Stare komunikaty jako aktualne** (np. dni wolne z 2016/2017 na pytanie „Kiedy mamy
+   wolne?”, „76 kierunków” z 2018/2019) — kontekst nie miał daty publikacji, a model nie
+   znał dzisiejszej daty. Naprawione niżej.
+3. **Błędne odczytanie kontekstu** przez `qwen3:8b` (np. „nie ma ograniczenia liczby
+   poprawek”, zmiana grupy laboratoryjnej przez biuro lektoratów, ocena jako decyzja
+   administracyjna, warunki stypendium rektora) — wybór niepasującego fragmentu albo
+   dopowiedzenie zasad. Wymaga lepszego retrievalu (reranking) albo większego modelu.
+4. **Pytania potoczne** („Jak ogarnąć warunek?”, „Nie działa mi konto”, „Ile nieobecności na
+   laboratoriach?”) nie przechodzą progu. Sprawdzone dwie poprawki — obie odrzucone:
+   - *Wyższy próg:* najbliższe fragmenty odrzuconych pytań są niezwiązane (dla „Jak ogarnąć
+     warunek?” — rozmowa o mediacji w sprawach karnych, odległość 0.481; dla „Gdzie znajdę
+     sylabus?” — „Wyspy wiedzy”, 0.480), a pytania spoza zakresu bywają bliżej (0.36–0.41)
+     niż odrzucone pytania w zakresie (0.43–0.49). Wyższy próg dałby LLM-owi śmieci.
+   - *Przeformułowanie pytania przez LLM* (gdy próg nic nie przepuści — zapytanie w języku
+     urzędowym albo „BRAK” dla tematów spoza uczelni, ~0.5 s): z 13 odrzuconych pytań
+     uratowało 2, i to niepasującymi stronami (COVID „level 2”, „zmiana formy studiów”), a
+     „Jak ogarnąć warunek?” uznało za temat spoza uczelni.
+   Przyczyną jest głównie brak treści w bazie (pkt 1), nie sposób zadania pytania.
+
+Uwaga do pytania o wysokość stypendium rektora w 2026/2027: odpowiedź „900 zł” zgadza się z
+komunikatem z 2.11.2026 w bazie („Świadczenia dla studentów w semestrze zimowym roku
+akademickiego 2026/2027”, opublikowanym pod starym adresem
+`…/swiadczenia-dla-studentow-w-semestrze-letnim-roku-akademickiego-2025-2026/`). Wzorzec
+opiera się na nowszym komunikacie z 3.11.2026 (konsultacje wysokości świadczeń), którego w
+bazie jeszcze nie ma — to kwestia odświeżania bazy, nie promptu.
+
+### Data publikacji w kontekście
+
+Nagłówek fragmentu komunikatu albo wydarzenia (`page_type` `news`/`event`) ma datę
+publikacji: `[Źródło: <url> | komunikat z 2024-10-22]`; prompt dostaje dzisiejszą datę i
+bieżący rok akademicki oraz regułę: gdy o obecne kwoty, terminy albo dni wolne mówią tylko
+komunikaty sprzed bieżącego roku akademickiego, nie przedstawiać ich jako obowiązujących,
+podać rok i odesłać na us.edu.pl (`build_context()`, `build_system_prompt()` w
+`usbot/core/prompts.py`). Strony informacyjne (`static`, `student`, `wydzial`) daty nie
+dostają: w bazie mają datę utworzenia strony (często 2019–2020), choć ich treść jest
+aktualizowana — np. strona o legitymacji z 2019 r. podaje aktualne opłaty.
+
+Porównanie A/B (3 powtórzenia na pytanie, ten sam retrieval):
+
+| Pytanie | Bez dat | Z datami (wdrożone) |
+|---|---|---|
+| „Kiedy mamy wolne?” | 3/3 — dni wolne z 2016/2017 jako odpowiedź | 3/3 — brak danych dla 2026/2027, stare daty z adnotacją, odesłanie na us.edu.pl |
+| „Jakie kierunki oferuje UŚ?” | 3/3 — „76 kierunków” (2018/2019) | 3/3 — „89 kierunków w 2024/2025” (nowszy komunikat, z rokiem) |
+| „Czy student 1. roku może dostać stypendium rektora?” | 3/3 — kwota 1500 zł z 2024/2025 bez adnotacji | 2/3 bez kwoty, 1/3 z datą komunikatu |
+| „Gdzie wypożyczyć książki?” | 3/3 — „wypożyczenia wznowione w 2012/2013” | 3/3 bez zmian (zdanie ze strony informacyjnej o bibliotece) |
+| Kontrola: legitymacja, stypendium socjalne, zapomoga | poprawne | poprawne |
+
+Pierwsza wersja reguły („kwot, terminów… i liczb z wcześniejszych lat NIE podawaj”)
+odwracała kwoty duplikatu legitymacji (strona: „25,50 zł lub 33,00 zł (dla osób, które
+rozpoczęły studia od 2019/2020)”) w 3/3 odpowiedzi — wdrożona wersja dotyczy tylko
+fragmentów z dopiskiem daty i każe strony informacyjne przytaczać dokładnie. Odporność na
+prompt injection po zmianie bez zmian: polecenie wprost w treści strony 0/5
+(`python evaluation/injection.py`).

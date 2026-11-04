@@ -54,7 +54,8 @@ odległość wektorową) →
 z jednej strony (z `RERANK=true`: 20 kandydatów ocenia cross-encoder i zostaje `TOP_K`
 najlepszych) → fragmenty dalsze niż `MAX_DISTANCE` (z rerankingiem: z wynikiem poniżej
 `MIN_RERANK_SCORE`) są odrzucane → przy pytaniu o dziekanat bez wydziału bot dopytuje →
-kontekst wbudowywany jest w system prompt → model LLM generuje odpowiedź strumieniowo.
+kontekst (z datą publikacji przy komunikatach i wydarzeniach) wbudowywany jest w system
+prompt razem z dzisiejszą datą → model LLM generuje odpowiedź strumieniowo.
 
 ### Warstwy (architektura heksagonalna)
 

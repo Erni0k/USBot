@@ -106,6 +106,8 @@
   prefiksem: Hit@1 0,542, MRR 0,643; po deduplikacji i limicie na stronę: Hit@10 0,896,
   MRR 0,649; z rerankingiem (56 pytań): Hit@8 po progu 0,804 → 0,893 (patrz [Testy](testy.md)).
 - Crawl wielu domen: `us.edu.pl`, `usnet.us.edu.pl`, `eduroam.us.edu.pl`.
+- **Data publikacji komunikatów w kontekście** i dzisiejsza data w prompcie — bot nie podaje
+  dni wolnych z 2016/2017 ani starych kwot jako aktualnych ([Testy](testy.md), 6.5).
 - **Dopytywanie o dziekanat** — przy pytaniu bez wskazania wydziału bot prosi o
   doprecyzowanie zamiast zgadywać (reguła w `ChatService`, bez wywołania LLM-a). Skróty
   wydziałów w zapytaniu są rozwijane do pełnych nazw, więc odpowiedź „WNP” trafia we
@@ -169,6 +171,12 @@
   trafia w dziekanat WNŚiT. Rozwijanie skrótów pomaga częściowo: w trybie vector strona
   dziekanatu WNŚiT wchodzi do top-4 po pytaniu z pełną nazwą WH, ale po „Godziny
   dziekanatu WH” zostają strony WNŚiT niebędące dziekanatem.
+- **Pokrycie bazy** — test 80 pytań ([Testy](testy.md), 6.5): z 44 stron wzorcowych w bazie
+  jest 19; brakuje m.in. `rekrutacja.us.edu.pl`, CINiBA, Erasmus, CWFiS i najnowszych
+  komunikatów. To główna przyczyna odmów na pytania potoczne — wyższy próg i przeformułowanie
+  pytania przez LLM nie pomagają.
+- **Pytania o egzaminy i oceny** — `qwen3:8b` myli zasady (poprawki, egzamin komisyjny,
+  odwołania); do sprawdzenia reranking albo większy model.
 - **Angielskie wersje portalu** (`/student/en/`) — pomijanie lub obniżanie w wynikach
   dla pytań po polsku.
 
