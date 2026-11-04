@@ -54,6 +54,11 @@ CLARIFY_MESSAGE = (
 )
 
 
+def faculty_options() -> list[dict[str, str]]:
+    """Wydziały jako `{"code", "name"}` — opcje zdarzenia `clarify` i GET /api/faculties."""
+    return [{"code": f.code, "name": f.name} for f in FACULTIES]
+
+
 def normalize(text: str) -> str:
     """Małe litery bez polskich znaków: „Ścisłych” → „scislych”."""
     text = text.lower().replace("ł", "l")

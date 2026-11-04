@@ -15,9 +15,9 @@ nie z tekstu LLM-a. ChatService nie trzyma stanu rozmowy — historię prowadzi 
 from collections.abc import Iterator, Sequence
 from typing import Literal, TypedDict
 
-from usbot.core.faculties import CLARIFY_MESSAGE, FACULTIES, expand_faculties, needs_faculty
+from usbot.core.faculties import CLARIFY_MESSAGE, expand_faculties, faculty_options, needs_faculty
 from usbot.core.models import Chunk, Message
-from usbot.core.prompts import NO_INFO, build_system_prompt, search_queries
+from usbot.core.prompts import NO_INFO, build_system_prompt, recent_turns, search_queries
 from usbot.ports import ChatLLM, Retriever
 
 
@@ -99,12 +99,15 @@ class ChatService:
     """Jedna tura rozmowy RAG. Zależy wyłącznie od portów Retriever i ChatLLM."""
 
     def __init__(self, retriever: Retriever, llm: ChatLLM, *, top_k: int,
-                 max_distance: float | None, min_rerank_score: float | None) -> None:
+                 max_distance: float | None, min_rerank_score: float | None,
+                 max_history_turns: int | None = None) -> None:
         self.retriever = retriever
         self.llm = llm
         self.top_k = top_k
         self.max_distance = max_distance
         self.min_rerank_score = min_rerank_score
+        # None = cała historia (cli.py); API przycina do API_HISTORY_TURNS tur
+        self.max_history_turns = max_history_turns
 
     def retrieve(self, messages: Sequence[Message]) -> list[Chunk]:
         """Fragmenty dla ostatniego pytania w `messages`, po progu odcięcia.
@@ -119,7 +122,13 @@ class ChatService:
         return cutoff(chunks, self.max_distance, self.min_rerank_score)
 
     def stream(self, question: str, history: Sequence[Message] = ()) -> Iterator[Event]:
-        """Odpowiedź na `question` w kontekście `history` (wcześniejsze tury) jako zdarzenia."""
+        """Odpowiedź na `question` w kontekście `history` (wcześniejsze tury) jako zdarzenia.
+
+        Z `max_history_turns` brane jest tylko tyle ostatnich tur historii — do zapytania
+        i do promptu LLM-a. Zamknięcie generatora (`close()`) w trakcie odpowiedzi zamyka
+        też strumień LLM-a, więc model przestaje generować.
+        """
+        history = recent_turns(history, self.max_history_turns)
         messages: list[Message] = [*history, {"role": "user", "content": question}]
         chunks = self.retrieve(messages)
         if not chunks:
@@ -129,7 +138,7 @@ class ChatService:
             return
         if needs_faculty(messages):
             yield {"type": "clarify", "message": CLARIFY_MESSAGE,
-                   "options": [{"code": f.code, "name": f.name} for f in FACULTIES]}
+                   "options": faculty_options()}
             yield {"type": "done", "answer": CLARIFY_MESSAGE}
             return
 

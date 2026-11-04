@@ -50,6 +50,20 @@ def user_messages(history: Sequence[Message]) -> list[str]:
     return [m["content"] for m in history if m["role"] == "user"]
 
 
+def recent_turns(history: Sequence[Message], turns: int | None) -> list[Message]:
+    """Ostatnie `turns` tur historii (tura = pytanie użytkownika i odpowiedź); None = cała.
+
+    Historię prowadzi klient, więc serwer ją przycina — długa rozmowa nie rozdmuchuje
+    promptu. Wynik zaczyna się od pytania użytkownika.
+    """
+    if turns is None:
+        return list(history)
+    starts = [i for i, m in enumerate(history) if m["role"] == "user"]
+    if turns <= 0 or not starts:
+        return []
+    return list(history[starts[-turns]:]) if len(starts) > turns else list(history[starts[0]:])
+
+
 def build_query(history: Sequence[Message], turns: int = HISTORY_TURNS) -> str:
     """Buduje zapytanie do wyszukiwarki z kilku ostatnich pytań użytkownika.
 

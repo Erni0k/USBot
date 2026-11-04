@@ -2,7 +2,7 @@
 
 Jedno miejsce zamiast `os.getenv` rozsianych po skryptach. Nazwy zmiennych są te same
 co wcześniej (`DATABASE_URL`, `TOP_K`, `RERANK`…), opis każdej: README („Konfiguracja”)
-i docs/api.md (3.3).
+i docs/api.md (3.5).
 
 Kolejność źródeł jak przy `load_dotenv()`: zmienna środowiskowa wygrywa z `.env`.
 Plik `.env` czytany jest z katalogu głównego repozytorium niezależnie od katalogu
@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BeforeValidator
+from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,10 +41,16 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://chatbot:changeme@localhost:5433/chatbot"
 
     # --- LLM (API zgodne z OpenAI: Ollama, vLLM) ---
-    llm_base_url: str = "http://localhost:11434/v1"
+    llm_base_url: str = "http://127.0.0.1:11434/v1"  # nie localhost: na Windows +2 s na połączenie
     llm_api_key: str = "not-needed"
     llm_model: str = "qwen3:1.7b"
     enable_thinking: EnvBool = False
+    # `reasoning_effort` wysyłany do API (np. "none"). Ollama ignoruje
+    # chat_template_kwargs.enable_thinking — Qwen3 wyłącza tam dopiero
+    # LLM_REASONING_EFFORT=none. Puste = parametr nie jest wysyłany (vLLM może go odrzucić).
+    llm_reasoning_effort: str | None = None
+    # Limit czasu na połączenie z LLM-em i na każdy kolejny fragment strumienia (sekundy).
+    llm_timeout: float = 60.0
 
     # --- embeddingi i reranker ---
     embed_model: str = "BAAI/bge-m3"
@@ -67,6 +73,19 @@ class Settings(BaseSettings):
     rerank: EnvBool = False
     # Przy RERANK=true próg dotyczy wyniku rerankera (0–1, większy = lepszy), nie odległości.
     min_rerank_score: float = 0.01
+
+    # --- API HTTP (usbot/api) ---
+    # Ile ostatnich tur (pytanie + odpowiedź) historii klienta trafia do ChatService.
+    api_history_turns: int = Field(5, ge=0)
+    # Dozwolone originy CORS, po przecinku (np. http://localhost:5173); puste = bez CORS.
+    api_cors_origins: str = ""
+    # Pula połączeń z bazą: rozmiar i limit czasu (sekundy) na połączenie, pobranie
+    # połączenia z puli i pojedyncze zapytanie (statement_timeout).
+    db_pool_min: int = Field(1, ge=0)
+    db_pool_max: int = Field(4, ge=1)
+    db_timeout: float = Field(10.0, gt=0)
+    # Limit czasu (sekundy) jednego sprawdzenia w GET /api/health.
+    health_timeout: float = Field(3.0, gt=0)
 
     # --- ingestia ---
     crawl_limit: int = 2000

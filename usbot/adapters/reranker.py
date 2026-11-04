@@ -1,4 +1,5 @@
 """Reranker na cross-encoderze sentence-transformers (domyślnie BAAI/bge-reranker-v2-m3)."""
+import threading
 from collections.abc import Sequence
 from functools import cached_property
 
@@ -7,11 +8,13 @@ from sentence_transformers import CrossEncoder
 
 
 class CrossEncoderReranker:
-    """Ocena par (zapytanie, tekst); model ładowany leniwie przy pierwszym użyciu."""
+    """Ocena par (zapytanie, tekst); model ładowany leniwie przy pierwszym użyciu albo
+    jawnie przez load(). Wywołania serializowane blokadą (żądania API w wątkach)."""
 
     def __init__(self, model_name: str, load_message: str | None = None) -> None:
         self.model_name = model_name
         self.load_message = load_message
+        self._lock = threading.Lock()
 
     @cached_property
     def model(self) -> CrossEncoder:
@@ -23,10 +26,15 @@ class CrossEncoderReranker:
         fp16 = {"torch_dtype": torch.float16} if torch.cuda.is_available() else None
         return CrossEncoder(self.model_name, max_length=512, model_kwargs=fp16)
 
+    def load(self) -> None:
+        with self._lock:
+            self.model  # noqa: B018 — wymusza załadowanie
+
     def score(self, queries: Sequence[str], texts: Sequence[str]) -> list[float]:
         """Dla każdego tekstu najlepszy wynik po zapytaniach (wszystkie pary w jednym predict)."""
         if not texts:
             return []
         pairs = [(q, t) for q in queries for t in texts]
-        scores = self.model.predict(pairs).reshape(len(queries), len(texts)).max(axis=0)
+        with self._lock:
+            scores = self.model.predict(pairs).reshape(len(queries), len(texts)).max(axis=0)
         return [float(s) for s in scores]

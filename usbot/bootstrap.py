@@ -18,25 +18,34 @@ def build_embedder(settings: Settings, load_message: str | None = EMBED_LOAD_MES
     return SentenceTransformerEmbedder(settings.embed_model, load_message)
 
 
-def build_retriever(settings: Settings, embedder: Embedder | None = None) -> Retriever:
-    """Retriever pgvector w trybie RETRIEVAL_MODE, z RERANK=true opakowany rerankerem."""
+def build_retriever_parts(settings: Settings, embedder: Embedder | None = None, *,
+                          pool=None, rerank_load_message: str | None = RERANK_LOAD_MESSAGE):
+    """(retriever, retriever pgvector, reranker albo None) — części są potrzebne API
+    (ładowanie rerankera przy starcie, sprawdzenie bazy w /api/health)."""
     from usbot.adapters.pgvector import PgvectorRetriever
-    retriever: Retriever = PgvectorRetriever(
+    pg = PgvectorRetriever(
         settings.database_url, embedder or build_embedder(settings),
         mode=settings.retrieval_mode, old_news_penalty=settings.old_news_penalty,
-        old_news_days=settings.old_news_days, max_per_url=settings.max_per_url,
+        old_news_days=settings.old_news_days, max_per_url=settings.max_per_url, pool=pool,
     )
-    if settings.rerank:
-        from usbot.adapters.reranker import CrossEncoderReranker
-        retriever = RerankingRetriever(
-            retriever, CrossEncoderReranker(settings.rerank_model, RERANK_LOAD_MESSAGE))
-    return retriever
+    if not settings.rerank:
+        return pg, pg, None
+    from usbot.adapters.reranker import CrossEncoderReranker
+    reranker = CrossEncoderReranker(settings.rerank_model, rerank_load_message)
+    return RerankingRetriever(pg, reranker), pg, reranker
 
 
-def build_llm(settings: Settings):
+def build_retriever(settings: Settings, embedder: Embedder | None = None) -> Retriever:
+    """Retriever pgvector w trybie RETRIEVAL_MODE, z RERANK=true opakowany rerankerem."""
+    return build_retriever_parts(settings, embedder)[0]
+
+
+def build_llm(settings: Settings, *, max_retries: int = 2):
     from usbot.adapters.llm import OpenAICompatibleLLM
     return OpenAICompatibleLLM(settings.llm_base_url, settings.llm_api_key, settings.llm_model,
-                               enable_thinking=settings.enable_thinking)
+                               enable_thinking=settings.enable_thinking,
+                               timeout=settings.llm_timeout, max_retries=max_retries,
+                               reasoning_effort=settings.llm_reasoning_effort)
 
 
 def build_chat_service(settings: Settings) -> ChatService:

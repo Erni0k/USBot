@@ -3,7 +3,8 @@
 Schemat tabeli `chunks`: infra/init.sql. Kolejność, duplikaty i fuzja list są w
 `usbot.core.ranking`; tu są zapytania SQL i zamiana wierszy na `Chunk`.
 """
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from typing import Literal
 
 import psycopg
@@ -40,6 +41,31 @@ def connect(database_url: str) -> psycopg.Connection:
     conn = psycopg.connect(database_url)
     register_vector(conn)
     return conn
+
+
+def _configure(conn: psycopg.Connection) -> None:
+    """Nowe połączenie w puli: typ `vector`; pula wymaga połączenia bez otwartej transakcji."""
+    register_vector(conn)
+    conn.commit()
+
+
+def create_pool(database_url: str, *, min_size: int = 1, max_size: int = 4,
+                timeout: float = 10.0):
+    """Pula połączeń (psycopg_pool) dla API: połączenia otwierane raz i używane ponownie.
+
+    `timeout` (sekundy) ogranicza czekanie na połączenie z puli, nawiązanie połączenia
+    (`connect_timeout`) i czas pojedynczego zapytania (`statement_timeout`). Pula jest
+    zwracana nieotwarta — otwiera ją `open()` (lifespan aplikacji); każde połączenie jest
+    sprawdzane przed wydaniem, więc restart bazy nie zostawia martwych połączeń.
+    """
+    from psycopg_pool import ConnectionPool
+    return ConnectionPool(
+        database_url, min_size=min_size, max_size=max_size, timeout=timeout, open=False,
+        configure=_configure, check=ConnectionPool.check_connection,
+        kwargs={"connect_timeout": max(1, round(timeout)),
+                "options": f"-c statement_timeout={round(timeout * 1000)}"},
+        name="usbot",
+    )
 
 
 def distinct_urls(database_url: str) -> set[str]:
@@ -87,11 +113,14 @@ class PgvectorRetriever:
     `old_news_days` dostają `score` = dist + kara i według niego są sortowane; próg
     nadal dotyczy samej odległości. `max_per_url`: limit fragmentów z jednej strony
     (0 = bez limitu).
+
+    Z `pool` (create_pool()) połączenia pochodzą z puli; bez niej każde wyszukiwanie
+    otwiera własne połączenie z `database_url` (cli.py, evaluate.py).
     """
 
     def __init__(self, database_url: str, embedder: Embedder, *, mode: Mode = "vector",
                  old_news_penalty: float = 0.0, old_news_days: int = 730,
-                 max_per_url: int = 2) -> None:
+                 max_per_url: int = 2, pool=None) -> None:
         if mode not in MODES:
             raise ValueError(f"RETRIEVAL_MODE musi być 'vector' albo 'hybrid', jest {mode!r}")
         self.database_url = database_url
@@ -100,6 +129,24 @@ class PgvectorRetriever:
         self.old_news_penalty = old_news_penalty
         self.old_news_days = old_news_days
         self.max_per_url = max_per_url
+        self.pool = pool
+
+    @contextmanager
+    def _connection(self, timeout: float | None = None) -> Iterator[psycopg.Connection]:
+        """Połączenie na jedno wyszukiwanie — jedna transakcja, zatwierdzana na końcu."""
+        if self.pool is not None:
+            with self.pool.connection(timeout=timeout) as conn:
+                yield conn
+        else:
+            with connect(self.database_url) as conn:
+                yield conn
+
+    def ping(self, timeout: float | None = None) -> dict:
+        """Sprawdzenie dla /api/health: baza odpowiada, a tabela chunks nie jest pusta."""
+        with self._connection(timeout) as conn:
+            if not conn.execute("SELECT EXISTS (SELECT 1 FROM chunks)").fetchone()[0]:
+                raise RuntimeError("tabela chunks jest pusta — uruchom ingestion/ingest.py")
+        return {"chunks": True}
 
     # --- port Retriever ---
 
@@ -124,7 +171,7 @@ class PgvectorRetriever:
         """
         qvec = self.embedder.embed(question)
         n = max(5 * k, 40)
-        with connect(self.database_url) as conn:
+        with self._connection() as conn:
             chunks = self._vector_candidates(conn, qvec, n)
             if self.mode == "hybrid":
                 chunks = rrf(chunks, self._fulltext_candidates(conn, question, qvec, n))
@@ -134,7 +181,8 @@ class PgvectorRetriever:
                            n: int) -> list[Chunk]:
         """n najbliższych fragmentów z indeksu HNSW, posortowanych według `score`."""
         if n > 40:  # domyślny hnsw.ef_search = 40 to też limit liczby wyników
-            conn.execute(f"SET hnsw.ef_search = {int(n)}")
+            # SET LOCAL: tylko do końca transakcji — połączenie z puli wraca bez zmiany
+            conn.execute(f"SET LOCAL hnsw.ef_search = {int(n)}")
         rows = conn.execute(
             f"SELECT {_COLUMNS} FROM chunks ORDER BY dist LIMIT %(n)s",
             {"qvec": qvec, "old_days": self.old_news_days, "n": n},

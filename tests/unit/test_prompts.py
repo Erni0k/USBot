@@ -4,7 +4,7 @@ import pytest
 from tests.fakes import chunk
 from usbot.core.faculties import (expand_faculties, mentioned_faculties, needs_faculty,
                                   normalize)
-from usbot.core.prompts import build_context, build_query, search_queries
+from usbot.core.prompts import build_context, build_query, recent_turns, search_queries
 
 
 def user(text):
@@ -91,3 +91,23 @@ def test_needs_faculty(history, expected):
 ])
 def test_expand_faculties(text, expected):
     assert expand_faculties(text) == expected
+
+
+def _turns(n):
+    h = []
+    for i in range(n):
+        h += [user(f"p{i}"), {"role": "assistant", "content": f"o{i}"}]
+    return h
+
+
+@pytest.mark.parametrize("history, turns, expected", [
+    (_turns(4), 2, ["p2", "o2", "p3", "o3"]),
+    (_turns(2), 5, ["p0", "o0", "p1", "o1"]),
+    (_turns(2), None, ["p0", "o0", "p1", "o1"]),
+    (_turns(2), 0, []),
+    ([], 3, []),
+    # historia zaczynająca się od odpowiedzi asystenta — wynik zaczyna się od pytania
+    ([{"role": "assistant", "content": "witaj"}, *_turns(1)], 3, ["p0", "o0"]),
+])
+def test_recent_turns(history, turns, expected):
+    assert [m["content"] for m in recent_turns(history, turns)] == expected

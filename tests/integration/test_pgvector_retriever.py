@@ -119,3 +119,42 @@ def test_chat_service_na_prawdziwej_bazie(retriever):
 
     assert list(svc.stream(Q_POGODA)) == [{"type": "refused", "message": NO_INFO},
                                           {"type": "done", "answer": NO_INFO}]
+
+
+# --- pula połączeń (API) ---
+
+@pytest.fixture
+def pool(database_url):
+    from usbot.adapters.pgvector import create_pool
+    p = create_pool(database_url, min_size=1, max_size=1, timeout=5)
+    p.open(wait=True)
+    yield p
+    p.close()
+
+
+@pytest.mark.parametrize("mode", ["vector", "hybrid"])
+def test_z_pula_te_same_wyniki_co_z_wlasnym_polaczeniem(database_url, pool, mode):
+    plain = PgvectorRetriever(database_url, EMBEDDER, mode=mode)
+    pooled = PgvectorRetriever(database_url, EMBEDDER, mode=mode, pool=pool)
+    for q in (Q_DZIEKANAT, Q_ELS, Q_EDUROAM):
+        for k in (3, 10):
+            a = [(c.id, c.dist, c.score) for c in plain.search([q], k)]
+            assert [(c.id, c.dist, c.score) for c in pooled.search([q], k)] == a
+
+
+def test_ef_search_nie_zostaje_na_polaczeniu_z_puli(database_url, pool):
+    PgvectorRetriever(database_url, EMBEDDER, pool=pool).search([Q_DZIEKANAT], 10)
+    with pool.connection() as conn:  # max_size=1 — to samo połączenie
+        assert conn.execute("SHOW hnsw.ef_search").fetchone()[0] == "40"
+
+
+def test_ping_i_statement_timeout(database_url):
+    import psycopg
+
+    from usbot.adapters.pgvector import create_pool
+    with create_pool(database_url, max_size=1, timeout=1) as pool:
+        assert PgvectorRetriever(database_url, EMBEDDER, pool=pool).ping(timeout=5) == {
+            "chunks": True}
+        with pool.connection() as conn, pytest.raises(psycopg.errors.QueryCanceled):
+            conn.execute("SELECT pg_sleep(5)")  # statement_timeout = 1 s z create_pool()
+

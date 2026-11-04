@@ -1,9 +1,11 @@
 openai
-psycopg[binary]
+psycopg[binary,pool]
 pgvector
 sentence-transformers
 python-dotenv
 pydantic-settings
+fastapi
+uvicorn
 httpx
 trafilatura
 lxml
