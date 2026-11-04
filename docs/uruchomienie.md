@@ -106,11 +106,30 @@ curl -N http://127.0.0.1:8000/api/chat -H 'Content-Type: application/json' \
   każde nowe połączenie z Ollamą czeka ~2–3 s na nieudaną próbę przez IPv6.
 - Na Ollamie `ENABLE_THINKING=false` nie wyłącza rozumowania Qwen3; zrób to przez
   `LLM_REASONING_EFFORT=none` (pierwszy token kilka razy szybciej — [API](api.md), 3.2).
-- `--host 0.0.0.0` udostępnia API w sieci. API nie ma uwierzytelniania ani limitu
-  zapytań — wystaw je za reverse proxy (np. nginx; strumienia SSE nie buforuj, serwer
-  wysyła `X-Accel-Buffering: no`).
 - Frontend z innego originu (np. serwer deweloperski na `:5173`) wymaga
-  `API_CORS_ORIGINS=http://localhost:5173`.
+  `API_CORS_ORIGINS=http://localhost:5173`. Dokumentację OpenAPI (`/docs`) włącza lokalnie
+  `API_DOCS=true`.
+
+!!! warning "Publiczne wdrożenie"
+    API nie ma kont użytkowników — chronią je limity (Architektura, 2.4). Przed
+    wystawieniem w internecie:
+
+    - uruchom za reverse proxy z HTTPS (np. nginx; strumienia SSE nie buforuj — serwer
+      wysyła `X-Accel-Buffering: no`) i przekaż adres klienta:
+      `uvicorn usbot.api.main:app --host 127.0.0.1 --port 8000 --proxy-headers
+      --forwarded-allow-ips=127.0.0.1 --no-server-header`
+      (bez `--proxy-headers` rate limiting widzi tylko adres proxy);
+    - ustaw `API_CORS_ORIGINS` na domenę frontendu, np. `https://czat.us.edu.pl`, i
+      `API_HSTS_SECONDS=31536000` (albo HSTS na proxy);
+    - zmień hasło bazy z `changeme`; `.env` zostaje tylko na serwerze;
+    - przy kilku procesach (`--workers`) lub instancjach ustaw
+      `API_RATE_LIMIT_STORAGE=redis://…` — inaczej limity liczy każdy proces osobno;
+    - dziennik rozmów (`logs/`) czyści serwer; gdy bywa wyłączony, dodaj do crona
+      `python -m usbot.api.chatlog cleanup`; stronę czatu uzupełnij o informację o
+      zapisywaniu pytań (RODO, Architektura 2.4);
+    - po aktualizacji scrapera uruchom raz ingestię z `CRAWL_REFETCH=true` (usuwa tekst
+      ukryty w HTML z istniejących stron);
+    - przed wdrożeniem: `pip-audit -r requirements-dev.txt`.
 - `--workers N` uruchamia N procesów, każdy z własną kopią modeli (bge-m3 ~2 GB pamięci GPU
   na proces). W jednym procesie żądania obsługują wątki: embedding i reranking idą po
   kolei (blokada na modelu), a równoległe odpowiedzi LLM-a obsługuje serwer modelu.

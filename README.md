@@ -41,6 +41,7 @@ us-chatbot/
 ├── evaluation/
 │   ├── evaluate.py     # metryki retrievalu: Hit/Recall/Precision/nDCG@k, MRR, dobór progu (odległość / reranker)
 │   ├── latency.py      # czas do pierwszego tokenu i całkowity przez API
+│   ├── injection.py    # próby prompt injection na LLM-ie (bieżący prompt)
 │   └── queries.jsonl   # pytania testowe z oznaczonymi URL-ami
 ├── infra/              # init.sql (pgvector, unaccent, tabele chunks i pages)
 ├── docker-compose.yml  # baza Postgres + opcjonalnie vLLM
@@ -249,6 +250,12 @@ curl -N http://127.0.0.1:8000/api/chat -H 'Content-Type: application/json' \
   -d '{"message": "Jak połączyć się z siecią eduroam?", "history": []}'
 ```
 
+**Publiczne wdrożenie** — API ma rate limiting na IP (czat 10/min, 200/dzień), limit
+równoległych strumieni (4, na IP 2), limity długości pytania i historii (`422`), CORS tylko
+dla `API_CORS_ORIGINS`, nagłówki bezpieczeństwa i dziennik rozmów bez adresów IP (retencja
+30 dni). Za reverse proxy uruchamiaj z `--proxy-headers --forwarded-allow-ips=<adres proxy>
+--no-server-header`. Model zagrożeń: `docs/architektura.md` (2.4).
+
 Modele, pula połączeń z bazą i klient LLM-a ładują się raz, przy starcie (kilkadziesiąt
 sekund). Rozłączenie klienta przerywa generowanie. Przy vLLM na porcie 8000 uruchom API
 na innym (`--port 8080`). Kontrakt, kody błędów, przykład klienta w JS i czasy odpowiedzi:
@@ -336,6 +343,14 @@ nie trafiają do `os.environ` — zmienne bibliotek (np. `HF_HOME`) ustaw w śro
 | `DB_POOL_MIN` / `DB_POOL_MAX` | API: rozmiar puli połączeń z bazą | `1` / `4` |
 | `DB_TIMEOUT` | API: limit (s) na połączenie z puli, nawiązanie połączenia i jedno zapytanie | `10` |
 | `HEALTH_TIMEOUT` | API: limit (s) jednego sprawdzenia w `/api/health` | `3` |
+| `API_MAX_MESSAGE_CHARS` / `API_MAX_HISTORY_MESSAGES` / `API_MAX_HISTORY_CHARS` | API: limity długości pytania i historii (przekroczenie → `422`) | `2000` / `40` / `40000` |
+| `API_MAX_BODY_BYTES` | API: największe ciało żądania (bajty) | `262144` |
+| `API_RATE_LIMIT_CHAT` / `API_RATE_LIMIT_DEFAULT` | API: rate limiting na adres IP | `10/minute;200/day` / `60/minute` |
+| `API_RATE_LIMIT_STORAGE` | API: liczniki limitów (`redis://…` przy kilku procesach) | `memory://` |
+| `API_MAX_STREAMS` / `API_MAX_STREAMS_PER_CLIENT` | API: równoległe odpowiedzi w sumie / na IP | `4` / `2` |
+| `API_DOCS` | API: dokumentacja OpenAPI (`/docs`) | `false` |
+| `API_HSTS_SECONDS` | API: nagłówek HSTS (`0` = bez) | `0` |
+| `CHAT_LOG_ENABLED` / `CHAT_LOG_DIR` / `CHAT_LOG_RETENTION_DAYS` | dziennik rozmów bez IP i jego retencja | `true` / `logs/` / `30` |
 | `CRAWL_LIMIT` | maks. liczba stron na jeden crawl | `6000` |
 | `CRAWL_DEPTH` | głębokość BFS (0 = tylko sitemap + seedy) | `3` |
 | `CRAWL_WORKERS` | równoległe requesty HTTP (usnet: maks. 2) | `6` |

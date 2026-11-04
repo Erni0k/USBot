@@ -114,6 +114,11 @@
   oraz `CRAWL_REFETCH` (ponowna ekstrakcja bez re-embeddingu niezmienionych stron).
 - Infrastruktura Docker (PostgreSQL + pgvector) z automatyczną inicjalizacją bazy.
 - Obsługa dwóch backendów LLM: Ollama (CPU/GPU) i vLLM (GPU).
+- **Bezpieczeństwo publicznego API** (Architektura, 2.4): model zagrożeń; kontekst w
+  `<context>` z instrukcją i przypomnieniem; usuwanie tekstu ukrytego w HTML; limity
+  długości (`422`), rate limiting na IP (slowapi), limit równoległych strumieni; CORS tylko
+  dla frontendu, nagłówki bezpieczeństwa; dziennik rozmów bez IP z retencją 30 dni;
+  przegląd zależności (`pip-audit`) i sekretów.
 - Tryb rozumowania Qwen3 (`ENABLE_THINKING`; na Ollamie wyłączany przez
   `LLM_REASONING_EFFORT=none`, bo Ollama ignoruje `ENABLE_THINKING`) i pełna konfiguracja
   przez `.env`.
@@ -124,8 +129,10 @@
   mapowanie zdarzeń na widoki: [UI/UX](ui-ux.md) (5.4).
 - Część testów z planu (crawler, chunking, ekstrakcja — T01, T06–T10, T14, T15).
 - CI/CD (GitHub Actions) — nieskonfigurowane w obecnej wersji.
-- Uwierzytelnianie użytkowników i limit zapytań — brak w CLI i w API HTTP (w sieci API
-  powinno stać za reverse proxy).
+- Uwierzytelnianie użytkowników — brak (API jest publiczne; chronią je limity na IP).
+- Limit dla ataku rozproszonego (wiele adresów IP) — tylko na reverse proxy / WAF.
+- Pełna odporność na prompt injection — mały model wciąż wykonuje część poleceń
+  (Architektura, 2.4).
 - Monitoring i logowanie strukturalne — brak dedykowanego systemu logów.
 - Pruning nieaktualnych stron — w bazie zostają stare fragmenty stron, które
   zwracają już 404, oraz stron, dla których nowa ekstrakcja daje pusty tekst. Zostają

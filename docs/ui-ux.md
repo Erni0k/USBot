@@ -78,11 +78,15 @@ zdarzenia z `POST /api/chat` (Server-Sent Events) i może je pokazać tak:
 | `refused` | dymek ze stałym komunikatem „Nie mam tej informacji…”, bez źródeł |
 | `clarify` | pytanie o wydział i przyciski z `options` (te same co `GET /api/faculties`); kliknięcie wysyła skrót, np. „WNP” |
 | `error` | komunikat `message` z przyciskiem „Spróbuj ponownie”; w historii zostaje samo pytanie |
+| HTTP `429` / `503` | „Za dużo pytań — spróbuj za N s” (N z nagłówka `Retry-After`), pole pytania zablokowane do tego czasu |
+| HTTP `422` | „Pytanie jest za długie” (limit 2000 znaków — licznik znaków przy polu) |
 
 Przycisk „Zatrzymaj” przerywa `fetch` (`AbortController`) — serwer kończy wtedy
 generowanie. Historię rozmowy trzyma przeglądarka (serwer jest bezstanowy) i przysyła
 ją w każdym żądaniu; przed pierwszym pytaniem strona może sprawdzić `GET /api/health`
-i pokazać komunikat o niedostępności zamiast pola pytania.
+i pokazać komunikat o niedostępności zamiast pola pytania. Pod polem pytania strona
+powinna informować, że pytania są zapisywane bez adresu IP przez 30 dni w celu poprawy
+jakości, i prosić o niewpisywanie danych osobowych (RODO — Architektura, 2.4).
 
 !!! note "Kodowanie znaków"
     Na Windows aplikacja jawnie ustawia `sys.stdout.reconfigure(encoding="utf-8")`,
