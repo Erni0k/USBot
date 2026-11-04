@@ -20,15 +20,18 @@ def settings():
 def test_domyslne_wartosci(env):
     s = settings()
     assert (s.top_k, s.max_distance, s.max_per_url, s.retrieval_mode, s.rerank) == \
-        (5, 0.43, 2, "vector", False)
+        (8, 0.43, 2, "vector", False)
+    # te same wartości co w .env.example i tabelach w README / docs/api.md (3.5)
+    assert (s.llm_model, s.crawl_limit, s.crawl_depth) == ("qwen3:8b", 6000, 3)
+    assert s.llm_base_url == "http://127.0.0.1:11434/v1"
 
 
 def test_nazwy_zmiennych_env(env):
-    env.setenv("TOP_K", "8")
+    env.setenv("TOP_K", "3")
     env.setenv("MAX_DISTANCE", "0.5")
     env.setenv("DATABASE_URL", "postgresql://u:p@h:1/db")
     s = settings()
-    assert (s.top_k, s.max_distance, s.database_url) == (8, 0.5, "postgresql://u:p@h:1/db")
+    assert (s.top_k, s.max_distance, s.database_url) == (3, 0.5, "postgresql://u:p@h:1/db")
 
 
 @pytest.mark.parametrize("value, expected", [("true", True), ("TRUE", True), ("false", False),

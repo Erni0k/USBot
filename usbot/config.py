@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # --- LLM (API zgodne z OpenAI: Ollama, vLLM) ---
     llm_base_url: str = "http://127.0.0.1:11434/v1"  # nie localhost: na Windows +2 s na połączenie
     llm_api_key: str = "not-needed"
-    llm_model: str = "qwen3:1.7b"
+    llm_model: str = "qwen3:8b"
     enable_thinking: EnvBool = False
     # `reasoning_effort` wysyłany do API (np. "none"). Ollama ignoruje
     # chat_template_kwargs.enable_thinking — Qwen3 wyłącza tam dopiero
@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
 
     # --- retrieval ---
-    top_k: int = 5
+    top_k: int = 8
     # Fragmenty dalsze niż próg (odległość kosinusowa) są odrzucane; gdy nie zostanie
     # żaden, bot odpowiada NO_INFO bez wywołania LLM-a. Wybór progu: docs/testy.md (6.4).
     max_distance: float = 0.43
@@ -88,8 +88,8 @@ class Settings(BaseSettings):
     health_timeout: float = Field(3.0, gt=0)
 
     # --- ingestia ---
-    crawl_limit: int = 2000
-    crawl_depth: int = 2
+    crawl_limit: int = 6000
+    crawl_depth: int = 3
     crawl_workers: int = 6
     embed_batch: int = 16          # ile stron naraz do embeddingu
     crawl_fresh: EnvBool = False
