@@ -235,7 +235,9 @@ pytest tests/unit          # bez Dockera, bazy i modeli
 pytest tests/integration   # wymaga Dockera: testcontainers uruchamia pgvector/pgvector:pg16
 ```
 
-Plan testów i szczegóły: `docs/testy.md` (6.2–6.3).
+Samo `pytest` uruchamia oba zestawy; bez Dockera testy integracyjne są pomijane (skip).
+Testy integracyjne używają syntetycznych embeddingów — nie pobierają modelu ani nie
+potrzebują bazy z `docker compose`. Plan testów i szczegóły: `docs/testy.md` (6.2–6.3).
 
 ## 6. Ewaluacja retrievalu
 

@@ -89,6 +89,13 @@ Oznaczanie łączyło kandydatów z wyszukiwania wektorowego, wyszukiwania po s�
 kluczowych i ręcznego przejrzenia serwisu `us.edu.pl/student/` — żeby etykiety nie
 faworyzowały ocenianego retrievera. Trafność liczona jest po URL-u.
 
+!!! note "Nazwy funkcji w opisach pomiarów"
+    Pomiary sprzed wydzielenia warstw (2026-11-04) opisują funkcje dawnego `cli.py`.
+    Odpowiedniki: `retrieve_for_chat()` → `ChatService.retrieve()`, `retrieve_hybrid()` →
+    `PgvectorRetriever(mode="hybrid")`, `_select()` → `select()`, `rerank()` i
+    `get_reranker()` → `RerankingRetriever` i `CrossEncoderReranker` (opis warstw:
+    [Architektura](architektura.md), 2.1).
+
 | Metryka | Znaczenie |
 |---|---|
 | Hit@k | odsetek pytań z co najmniej jedną trafną stroną w top-k |
@@ -730,10 +737,6 @@ dłużej niż odpowiedź LLM-a.
 - Do zrobienia: kara za stare aktualności także po rerankingu (3 z 12 pogorszeń), przegląd
   etykiet z kandydatami rerankera, ponowna kalibracja `MIN_RERANK_SCORE` po zmianie modelu
   rerankera lub `RERANK_CANDIDATES`.
-
-!!! warning "Status"
-    Katalog `tests/` jest **planowany** — testy zostaną zaimplementowane w kolejnych
-    iteracjach. Powyższe komendy zakładają standardową strukturę pytest.
 
 **Wydzielenie warstw `usbot/`** (2026-11-04; refaktor bez zmiany zachowania, baza jak
 wyżej: 42 330 fragmentów z 12 055 stron). Logika z `cli.py` przeszła do `usbot/core/`

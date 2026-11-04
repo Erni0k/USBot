@@ -84,6 +84,17 @@ Wpisz pytanie i naciśnij Enter. Wyjście: `wyjdź` lub `Ctrl+C`.
     Zanim odpalisz bota, upewnij się, że **Ollama działa** (`ollama serve`) oraz
     **baza jest wstała** (`docker compose up -d db`).
 
+### Krok 8 — Testy (opcjonalnie)
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/unit          # bez Dockera, bazy i modeli
+pytest tests/integration   # wymaga działającego Dockera (testcontainers)
+```
+
+Testy integracyjne same uruchamiają tymczasowy kontener `pgvector/pgvector:pg16` —
+baza z kroku 5 nie jest potrzebna. Szczegóły: [Testy](testy.md) (6.3).
+
 ## 4.3 Ingestia — szczegóły
 
 Pasek postępu pokazuje `+` (strona nowa/zmieniona) oraz `=` (bez zmian).

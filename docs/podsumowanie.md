@@ -55,6 +55,13 @@
 ### Zrealizowane
 
 - Aplikacja terminalowa (`cli.py`) z rozmową wieloturową (historia konwersacji).
+- **Architektura warstwowa** (`usbot/`): rdzeń (`ChatService` — odpowiedź jako strumień
+  zdarzeń `sources`/`token`/`refused`/`clarify`/`done`) zależy tylko od portów; adaptery
+  bge-m3, cross-encodera, pgvector i API OpenAI wspólne dla `cli.py`, ewaluacji i ingestii;
+  konfiguracja przez pydantic-settings. Gotowe pod aplikację webową; refaktor bez zmiany
+  wyników ewaluacji.
+- **Testy automatyczne** (pytest): jednostkowe na atrapach portów (bez Dockera) i
+  integracyjne retrievera pgvector na testcontainers — plan i status w [Testy](testy.md) (6.2).
 - Potok RAG: embedding pytania → wyszukiwanie wektorowe → generacja z kontekstem.
 - **Retrieval z kontekstem rozmowy** (`build_query`) dla krótkich follow-upów.
 - **Inkrementalny crawler** BFS: requesty warunkowe (304), deduplikacja po hashu,
@@ -69,7 +76,7 @@
   zachowuje nagłówki h1–h6. `CHUNKER_VERSION` (w `pages.chunker_version`) wymusza
   ponowny podział i embedding po zmianie chunkingu.
 - **Metadane fragmentów**: `title`, `page_type` (`student`, `wydzial`, `static`, `news`,
-  `event`) i `published_at`; opcjonalna kara za stare aktualności w `retrieve()`
+  `event`) i `published_at`; opcjonalna kara za stare aktualności w wyszukiwaniu
   (`OLD_NEWS_PENALTY`, domyślnie wyłączona).
 - **Próg odcięcia** `MAX_DISTANCE` — gdy nic nie jest dość blisko, bot odpowiada stałym
   tekstem bez wywołania LLM-a.
@@ -95,7 +102,9 @@
   MRR 0,649; z rerankingiem (56 pytań): Hit@8 po progu 0,804 → 0,893 (patrz [Testy](testy.md)).
 - Crawl wielu domen: `us.edu.pl`, `usnet.us.edu.pl`, `eduroam.us.edu.pl`.
 - **Dopytywanie o dziekanat** — przy pytaniu bez wskazania wydziału bot prosi o
-  doprecyzowanie zamiast zgadywać.
+  doprecyzowanie zamiast zgadywać (reguła w `ChatService`, bez wywołania LLM-a). Skróty
+  wydziałów w zapytaniu są rozwijane do pełnych nazw, więc odpowiedź „WNP” trafia we
+  właściwy dziekanat (tryb vector: zły wydział na 1. miejscu 39% → 2% rozmów).
 - Skrypt ingestii z chunkingiem, paskiem postępu (`tqdm`) i trybami `CRAWL_FRESH`
   oraz `CRAWL_REFETCH` (ponowna ekstrakcja bez re-embeddingu niezmienionych stron).
 - Infrastruktura Docker (PostgreSQL + pgvector) z automatyczną inicjalizacją bazy.
@@ -104,8 +113,9 @@
 
 ### Niezrealizowane (planowane)
 
-- Interfejs webowy — zaplanowany jako rozszerzenie projektu.
-- Testy automatyczne (pytest) — do zaimplementowania w kolejnych iteracjach.
+- Interfejs webowy — zaplanowany jako rozszerzenie projektu; logika rozmowy
+  (`ChatService`) jest już od niego niezależna.
+- Część testów z planu (crawler, chunking, ekstrakcja — T01, T06–T10, T14, T15).
 - CI/CD (GitHub Actions) — nieskonfigurowane w obecnej wersji.
 - Uwierzytelnianie użytkowników — brak w wersji CLI.
 - Monitoring i logowanie strukturalne — brak dedykowanego systemu logów.
@@ -120,7 +130,8 @@
 ## 7.3 Kierunki rozwoju
 
 - **Interfejs webowy** — migracja z CLI do aplikacji webowej z czatem i streamingiem.
-- **Lepszy RAG hybrydowy** — tryb `hybrid` istnieje, ale przegrywa z wektorowym. Do
+- **Lepszy RAG hybrydowy** — tryb `hybrid` istnieje, ale przegrywa z wektorowym; traci
+  też na rozwijaniu skrótów wydziałów (pełna nazwa przyciąga aktualności wydziału). Do
   sprawdzenia: ranking pełnotekstowy ważący rzadkie słowa (BM25/IDF), próg uwzględniający
   dopasowanie słowne (pytania ze skrótami tracą dziś przez `MAX_DISTANCE`, nie przez
   ranking), przegląd etykiet z kandydatami z obu trybów i większy zbiór pytań ze skrótami.
@@ -137,8 +148,10 @@
 - **Limit 1 fragmentu na stronę** — na etykietach URL-owych wygrywa z obecnym limitem 2
   (Hit@8 0,854 → 0,896), ale może odcinać drugą sekcję strony z odpowiedzią; do decyzji
   po ewaluacji samych odpowiedzi LLM-a.
-- **Follow-upy po zmianie wydziału** — „a wnst?” po pytaniu o dziekanat WH nie zwraca
-  dziekanatu WNST (zapytanie z historią jest zdominowane przez WH).
+- **Follow-upy po zmianie wydziału** — „a wnst?” po pytaniu o dziekanat WH nadal słabo
+  trafia w dziekanat WNŚiT. Rozwijanie skrótów pomaga częściowo: w trybie vector strona
+  dziekanatu WNŚiT wchodzi do top-4 po pytaniu z pełną nazwą WH, ale po „Godziny
+  dziekanatu WH” zostają strony WNŚiT niebędące dziekanatem.
 - **Angielskie wersje portalu** (`/student/en/`) — pomijanie lub obniżanie w wynikach
   dla pytań po polsku.
 

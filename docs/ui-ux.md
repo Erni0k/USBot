@@ -17,6 +17,7 @@ migracji do interfejsu webowego (planowane rozszerzenie).
 | `Ctrl+C` lub `Ctrl+D` (EOF) | Graceful exit z komunikatem „Do widzenia!". |
 | Błąd bazy danych | Komunikat błędu z instrukcją uruchomienia Dockera, pętla kontynuowana. |
 | Brak danych w bazie | Bot informuje o braku informacji, sugeruje us.edu.pl lub dziekanat. |
+| Pytanie o dziekanat bez wydziału | Bot dopytuje o wydział i wymienia wszystkie (bez wywołania LLM-a); odpowiedź może być skrótem, np. „WNP”. |
 
 ## 5.3 Widoki i stany aplikacji
 
@@ -42,6 +43,31 @@ migracji do interfejsu webowego (planowane rozszerzenie).
 ```text
 Bot: Nie mam tej informacji - sprawdź na us.edu.pl lub skontaktuj się z dziekanatem.
 ```
+
+### Stan: dopytanie o wydział
+
+```text
+Ty: Jakie są godziny otwarcia dziekanatu?
+
+Bot: Każdy wydział ma własny dziekanat z innymi godzinami i kontaktem. O który wydział chodzi?
+- Wydział Humanistyczny (WH)
+- Wydział Nauk Przyrodniczych (WNP)
+- Wydział Nauk Społecznych (WNS)
+- Wydział Nauk Ścisłych i Technicznych (WNŚiT)
+- Wydział Prawa i Administracji (WPiA)
+- Wydział Sztuki i Nauk o Edukacji (WSNE)
+- Wydział Teologiczny (WTL)
+
+Ty: WNP
+```
+
+Po odpowiedzi bot szuka z pełną nazwą wydziału i odpowiada już przez LLM-a.
+
+!!! note "Interfejs webowy"
+    `cli.py` tylko wypisuje zdarzenia z `ChatService.stream()` (`sources`, `token`,
+    `refused`, `clarify`, `done`). Aplikacja webowa dostanie te same zdarzenia — np.
+    `clarify.options` jako przyciski wydziałów, a `sources` jako listę źródeł obok
+    odpowiedzi. Opis zdarzeń: [Architektura](architektura.md) (2.1).
 
 !!! note "Kodowanie znaków"
     Na Windows aplikacja jawnie ustawia `sys.stdout.reconfigure(encoding="utf-8")`,
