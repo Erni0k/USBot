@@ -3,12 +3,13 @@
 **Chatbot Uniwersytetu Śląskiego w Katowicach**
 
 !!! info "Metryka dokumentu"
-    - **Wersja:** 0.2 (czerwiec 2026)
+    - **Wersja:** 0.6 (listopad 2026)
     - **Repozytorium:** [github.com/Erni0k/USBot](https://github.com/Erni0k/USBot)
     - **Status:** w aktywnym rozwoju
 
-USBot to **terminalowy chatbot** oparty na technice **RAG** (Retrieval-Augmented
-Generation), który odpowiada na pytania o sprawy uczelniane na podstawie treści
+USBot to **chatbot** oparty na technice **RAG** (Retrieval-Augmented Generation),
+dostępny w terminalu (`cli.py`) i przez **API HTTP** dla strony WWW (FastAPI, strumień
+Server-Sent Events), który odpowiada na pytania o sprawy uczelniane na podstawie treści
 pobranych ze stron `us.edu.pl`, `usnet.us.edu.pl` i `eduroam.us.edu.pl`.
 Zamiast ręcznie przeszukiwać dziesiątki podstron, użytkownik zadaje pytanie w
 języku naturalnym i otrzymuje zwięzłą odpowiedź wraz ze źródłowym adresem URL.
@@ -16,10 +17,10 @@ języku naturalnym i otrzymuje zwięzłą odpowiedź wraz ze źródłowym adrese
 ## Jak to działa w skrócie
 
 ```
-Użytkownik (terminal; w przyszłości aplikacja webowa)
+Użytkownik: terminal (cli.py) albo strona WWW (API HTTP, usbot/api)
        │
        ▼
-    cli.py ──► ChatService (usbot/core) — odpowiedź jako strumień zdarzeń
+    ChatService (usbot/core) — odpowiedź jako strumień zdarzeń (w API: Server-Sent Events)
        │
        ├─ zapytanie: ostatnie pytania rozmowy, skróty wydziałów („WNP”) rozwinięte do nazw
        ├─ retrieval: pgvector (embeddingi bge-m3, zapytanie z kontekstem rozmowy)
@@ -42,7 +43,7 @@ Użytkownik (terminal; w przyszłości aplikacja webowa)
 
 Logika rozmowy (`ChatService`) nie zależy od bazy, modeli ani terminala — korzysta z
 portów, za którymi stoją adaptery (pgvector, bge-m3, API OpenAI). Z tej samej logiki
-skorzysta aplikacja webowa. Warstwy: [Architektura](architektura.md) (2.1).
+korzystają terminal i API HTTP. Warstwy: [Architektura](architektura.md) (2.1).
 
 Wiedza w bazie utrzymywana jest osobnym, **inkrementalnym crawlerem**
 ([`ingestion/ingest.py`](uruchomienie.md)).
@@ -54,6 +55,8 @@ Wiedza w bazie utrzymywana jest osobnym, **inkrementalnym crawlerem**
   i **rerankingiem** cross-encoderem (`RERANK=true`)
 - 🧠 **Lokalny LLM** Qwen3 (domyślnie `qwen3:8b`) — bez wysyłania danych na zewnątrz
 - 💬 **Rozmowa wieloturowa** z retrievalem uwzględniającym kontekst poprzednich pytań
+- 🌐 **API HTTP** (FastAPI): `POST /api/chat` jako Server-Sent Events, `/api/health`,
+  `/api/faculties`; serwer bezstanowy, przerwanie połączenia przerywa generowanie
 - 🕸️ **Inkrementalny crawler** BFS z równoległym pobieraniem (limit żądań na domenę) i pomijaniem niezmienionych stron
 - ♻️ **Cache embeddingów** (ta sama treść liczona raz) i pomijanie **boilerplate'u** powtarzanego na wielu stronach
 - 🔗 Każda odpowiedź zawiera **źródłowy URL**
@@ -71,7 +74,8 @@ cp .env.example .env            # uzupełnij LLM_BASE_URL, LLM_MODEL
 ollama pull qwen3:8b && ollama serve
 docker compose up -d db
 python ingestion/ingest.py      # pierwsza ingestia (pobiera model embeddingów)
-python cli.py
+python cli.py                   # terminal
+uvicorn usbot.api.main:app      # albo API HTTP na http://127.0.0.1:8000 (docs/api.md)
 ```
 
 Szczegóły: [Instrukcja uruchomienia](uruchomienie.md).

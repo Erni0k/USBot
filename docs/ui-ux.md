@@ -2,10 +2,11 @@
 
 ## 5.1 Opis interfejsu
 
-USBot posiada interfejs tekstowy (CLI) uruchamiany w terminalu systemowym. Nie
-wymaga przeglądarki ani serwera webowego. Interfejs zaprojektowany jest z myślą o
-osobach technicznych (administratorzy, zaawansowani studenci) oraz o przyszłej
-migracji do interfejsu webowego (planowane rozszerzenie).
+USBot posiada interfejs tekstowy (CLI) uruchamiany w terminalu systemowym — dla osób
+technicznych (administratorzy, zaawansowani studenci). Dla strony WWW gotowe jest API
+HTTP (`usbot/api/`, [API](api.md) 3.1): przeglądarka wysyła pytanie z historią i dostaje
+te same zdarzenia, które `cli.py` wypisuje w terminalu. Sam interfejs przeglądarkowy
+(frontend) jest w przygotowaniu — niżej zasady, jak zdarzenia mapują się na widoki.
 
 ## 5.2 Opis nawigacji
 
@@ -63,11 +64,25 @@ Ty: WNP
 
 Po odpowiedzi bot szuka z pełną nazwą wydziału i odpowiada już przez LLM-a.
 
-!!! note "Interfejs webowy"
-    `cli.py` tylko wypisuje zdarzenia z `ChatService.stream()` (`sources`, `token`,
-    `refused`, `clarify`, `done`). Aplikacja webowa dostanie te same zdarzenia — np.
-    `clarify.options` jako przyciski wydziałów, a `sources` jako listę źródeł obok
-    odpowiedzi. Opis zdarzeń: [Architektura](architektura.md) (2.1).
+## 5.4 Strona WWW — zdarzenia API a widoki
+
+`cli.py` tylko wypisuje zdarzenia z `ChatService.stream()`. Strona WWW dostaje te same
+zdarzenia z `POST /api/chat` (Server-Sent Events) i może je pokazać tak:
+
+| Zdarzenie | Widok w przeglądarce |
+|---|---|
+| (wysłanie pytania) | dymek pytania, wskaźnik „szukam…” (wyszukiwanie trwa ~0.1 s) |
+| `sources` | lista źródeł (tytuł strony jako link) nad lub pod odpowiedzią; wskaźnik „piszę…” do pierwszego tokenu |
+| `token` | dopisywanie tekstu do dymka odpowiedzi (Markdown — model używa nagłówków i list) |
+| `done` | koniec odpowiedzi; `answer` trafia do historii w przeglądarce |
+| `refused` | dymek ze stałym komunikatem „Nie mam tej informacji…”, bez źródeł |
+| `clarify` | pytanie o wydział i przyciski z `options` (te same co `GET /api/faculties`); kliknięcie wysyła skrót, np. „WNP” |
+| `error` | komunikat `message` z przyciskiem „Spróbuj ponownie”; w historii zostaje samo pytanie |
+
+Przycisk „Zatrzymaj” przerywa `fetch` (`AbortController`) — serwer kończy wtedy
+generowanie. Historię rozmowy trzyma przeglądarka (serwer jest bezstanowy) i przysyła
+ją w każdym żądaniu; przed pierwszym pytaniem strona może sprawdzić `GET /api/health`
+i pokazać komunikat o niedostępności zamiast pola pytania.
 
 !!! note "Kodowanie znaków"
     Na Windows aplikacja jawnie ustawia `sys.stdout.reconfigure(encoding="utf-8")`,

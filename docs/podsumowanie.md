@@ -55,11 +55,16 @@
 ### Zrealizowane
 
 - Aplikacja terminalowa (`cli.py`) z rozmową wieloturową (historia konwersacji).
+- **API HTTP** (`usbot/api/`, FastAPI) dla strony WWW: `POST /api/chat` jako Server-Sent
+  Events, `/api/health` z limitami czasu, `/api/faculties`; zasoby (modele, pula połączeń
+  z bazą, klient LLM-a) ładowane raz przy starcie, serwer bezstanowy, rozłączenie klienta
+  przerywa generowanie. Pierwszy token po ~0.8 s, całość ~6.4 s (mediana, `qwen3:8b`,
+  `LLM_REASONING_EFFORT=none`; [API](api.md), 3.2).
 - **Architektura warstwowa** (`usbot/`): rdzeń (`ChatService` — odpowiedź jako strumień
   zdarzeń `sources`/`token`/`refused`/`clarify`/`done`) zależy tylko od portów; adaptery
   bge-m3, cross-encodera, pgvector i API OpenAI wspólne dla `cli.py`, ewaluacji i ingestii;
-  konfiguracja przez pydantic-settings. Gotowe pod aplikację webową; refaktor bez zmiany
-  wyników ewaluacji.
+  konfiguracja przez pydantic-settings; API HTTP to kolejny adapter wejścia. Refaktor
+  bez zmiany wyników ewaluacji.
 - **Testy automatyczne** (pytest): jednostkowe na atrapach portów (bez Dockera) i
   integracyjne retrievera pgvector na testcontainers — plan i status w [Testy](testy.md) (6.2).
 - Potok RAG: embedding pytania → wyszukiwanie wektorowe → generacja z kontekstem.
@@ -109,15 +114,18 @@
   oraz `CRAWL_REFETCH` (ponowna ekstrakcja bez re-embeddingu niezmienionych stron).
 - Infrastruktura Docker (PostgreSQL + pgvector) z automatyczną inicjalizacją bazy.
 - Obsługa dwóch backendów LLM: Ollama (CPU/GPU) i vLLM (GPU).
-- Tryb rozumowania Qwen3 (`ENABLE_THINKING`) i pełna konfiguracja przez `.env`.
+- Tryb rozumowania Qwen3 (`ENABLE_THINKING`; na Ollamie wyłączany przez
+  `LLM_REASONING_EFFORT=none`, bo Ollama ignoruje `ENABLE_THINKING`) i pełna konfiguracja
+  przez `.env`.
 
 ### Niezrealizowane (planowane)
 
-- Interfejs webowy — zaplanowany jako rozszerzenie projektu; logika rozmowy
-  (`ChatService`) jest już od niego niezależna.
+- Interfejs przeglądarkowy (frontend) — API HTTP jest gotowe, strony WWW jeszcze nie ma;
+  mapowanie zdarzeń na widoki: [UI/UX](ui-ux.md) (5.4).
 - Część testów z planu (crawler, chunking, ekstrakcja — T01, T06–T10, T14, T15).
 - CI/CD (GitHub Actions) — nieskonfigurowane w obecnej wersji.
-- Uwierzytelnianie użytkowników — brak w wersji CLI.
+- Uwierzytelnianie użytkowników i limit zapytań — brak w CLI i w API HTTP (w sieci API
+  powinno stać za reverse proxy).
 - Monitoring i logowanie strukturalne — brak dedykowanego systemu logów.
 - Pruning nieaktualnych stron — w bazie zostają stare fragmenty stron, które
   zwracają już 404, oraz stron, dla których nowa ekstrakcja daje pusty tekst. Zostają
@@ -129,7 +137,9 @@
 
 ## 7.3 Kierunki rozwoju
 
-- **Interfejs webowy** — migracja z CLI do aplikacji webowej z czatem i streamingiem.
+- **Strona WWW** — frontend na API HTTP (strumień SSE, przyciski wydziałów, lista
+  źródeł); przerwanie odpowiedzi także w trakcie rozumowania Qwen3 (dziś dopiero po jego
+  końcu, gdy rozumowanie jest włączone).
 - **Lepszy RAG hybrydowy** — tryb `hybrid` istnieje, ale przegrywa z wektorowym; traci
   też na rozwijaniu skrótów wydziałów (pełna nazwa przyciąga aktualności wydziału). Do
   sprawdzenia: ranking pełnotekstowy ważący rzadkie słowa (BM25/IDF), próg uwzględniający
@@ -143,7 +153,7 @@
 - **Panel administracyjny** — zarządzanie ingestią, przegląd fragmentów, monitoring jakości.
 - **Ewaluacja automatyczna** — metryki jakości RAG (RAGAS, TruLens) do mierzenia
   trafności i halucynacji.
-- **Konteneryzacja pełnej aplikacji** — `Dockerfile` dla `cli.py` / serwera webowego.
+- **Konteneryzacja pełnej aplikacji** — `Dockerfile` dla API (`uvicorn`) i `cli.py`.
 - **Pruning bazy** — automatyczne usuwanie fragmentów stron, które zniknęły ze źródła.
 - **Limit 1 fragmentu na stronę** — na etykietach URL-owych wygrywa z obecnym limitem 2
   (Hit@8 0,854 → 0,896), ale może odcinać drugą sekcję strony z odpowiedzią; do decyzji
@@ -158,4 +168,4 @@
 ---
 
 *Dokument odzwierciedla stan kodu źródłowego repozytorium
-[github.com/Erni0k/USBot](https://github.com/Erni0k/USBot). Wersja 0.5 — listopad 2026.*
+[github.com/Erni0k/USBot](https://github.com/Erni0k/USBot). Wersja 0.6 — listopad 2026.*

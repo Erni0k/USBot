@@ -5,17 +5,19 @@ Chatbot dla Uniwersytetu Śląskiego w Katowicach oparty o lokalnie hostowany mo
 trzymane w pgvector).
 
 ```
-Użytkownik (terminal)
+Użytkownik: terminal (cli.py) albo strona WWW (API HTTP: uvicorn usbot.api.main:app)
        │
        ▼
-    cli.py
+    ChatService (usbot/core) — odpowiedź jako strumień zdarzeń (w API: Server-Sent Events)
        │
+       ├─ zapytanie: ostatnie pytania rozmowy, skróty wydziałów („WNP”) rozwinięte do nazw
        ├─ retrieval: pgvector (embeddingi bge-m3, zapytanie z kontekstem rozmowy)
        │    opcjonalnie + pełnotekstowe Postgres FTS, łączone przez RRF (RETRIEVAL_MODE=hybrid)
        ├─ wybór TOP_K: bez powtórzonej treści, maks. 2 fragmenty z jednej strony
        │    opcjonalnie reranking top-20 cross-encoderem bge-reranker-v2-m3 (RERANK=true)
        ├─ próg odległości (z RERANK — wyniku rerankera): nic pasującego → stała odpowiedź, bez LLM-a
-       └─ generacja: Ollama / vLLM (Qwen3, API OpenAI-compatible)
+       ├─ dziekanat bez wydziału → dopytanie o wydział, bez LLM-a
+       └─ generacja: Ollama / vLLM (Qwen3, API OpenAI-compatible, streaming)
 ```
 
 ## Struktura

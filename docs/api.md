@@ -13,7 +13,7 @@ uvicorn usbot.api.main:app --host 127.0.0.1 --port 8000
 ```
 
 Szczegóły uruchomienia (baza, Ollama, port przy vLLM): [Instrukcja uruchomienia](uruchomienie.md)
-(krok 7). Opis OpenAPI generuje FastAPI: `http://127.0.0.1:8000/docs`.
+(krok 7b). Opis OpenAPI generuje FastAPI: `http://127.0.0.1:8000/docs`.
 
 | Metoda | Ścieżka | Odpowiedź | Opis |
 |---|---|---|---|
@@ -372,7 +372,7 @@ wcześniejsze kopie są usuwane w tej samej transakcji (opis reguły w README).
 | `LLM_API_KEY` | `not-needed` | Klucz API (Ollama nie wymaga) |
 | `LLM_MODEL` | `qwen3:8b` | Nazwa modelu do użycia |
 | `EMBED_MODEL` | `BAAI/bge-m3` | Model embeddingów (Hugging Face) |
-| `EMBED_DIM` | `1024` | Wymiar wektora embeddingu |
+| `EMBED_DIM` | `1024` | Tylko informacyjnie (w `.env.example`) — kod go nie czyta; wymiar wynika z modelu i kolumny `vector(1024)` w `infra/init.sql` |
 | `TOP_K` | `8` | Liczba fragmentów z bazy przekazywanych do LLM |
 | `MAX_DISTANCE` | `0.43` | Maks. odległość kosinusowa fragmentu; gdy żaden się nie mieści, bot odpowiada bez LLM-a |
 | `OLD_NEWS_PENALTY` | `0` | Kara do odległości (tylko przy sortowaniu) dla `news`/`event` starszych niż `OLD_NEWS_DAYS`; `0` = wyłączone |

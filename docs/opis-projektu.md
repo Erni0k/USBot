@@ -2,8 +2,9 @@
 
 ## 1.1 Cel aplikacji
 
-USBot to chatbot terminalowy stworzony dla społeczności akademickiej Uniwersytetu
-Śląskiego w Katowicach. Rozwiązuje problem trudnego dostępu do informacji
+USBot to chatbot stworzony dla społeczności akademickiej Uniwersytetu Śląskiego w
+Katowicach — dostępny w terminalu i przez API HTTP, na którym powstaje strona WWW dla
+studentów. Rozwiązuje problem trudnego dostępu do informacji
 rozproszonych na stronie us.edu.pl — zamiast ręcznie przeszukiwać dziesiątki
 podstron, użytkownik może zadać pytanie w języku naturalnym i otrzymać zwięzłą
 odpowiedź wraz ze źródłowym adresem URL.
@@ -29,8 +30,14 @@ Każda funkcja opisana jest w formacie *User Story*:
   bota była aktualna po zmianach na stronie uczelni.
 - Jako **administrator** chcę, aby ponowna ingestia pobierała tylko zmienione strony,
   aby aktualizacja była szybka (crawl inkrementalny).
+- Jako **student** chcę korzystać z bota w przeglądarce i widzieć odpowiedź na bieżąco
+  (token po tokenie) wraz z listą źródeł — API HTTP strumieniuje zdarzenia SSE.
+- Jako **twórca strony WWW** chcę bezstanowego API z jasnym kontraktem zdarzeń
+  (`sources`, `token`, `done`, `refused`, `clarify`, `error`), listą wydziałów do
+  przycisków i sprawdzeniem stanu usług (`/api/health`).
 - Jako **użytkownik zaawansowany** chcę włączyć tryb rozumowania
-  (`ENABLE_THINKING`), aby uzyskać bardziej przemyślane odpowiedzi kosztem czasu.
+  (`ENABLE_THINKING`; na Ollamie sterowany przez `LLM_REASONING_EFFORT`), aby uzyskać
+  bardziej przemyślane odpowiedzi kosztem czasu.
 - Jako **użytkownik** chcę, aby bot odmówił odpowiedzi spoza zakresu wiedzy
   uczelnianej i wyraźnie poinformował o braku informacji.
 - Jako **użytkownik** chcę zakończyć sesję wpisując `wyjdź` lub naciskając `Ctrl+C`.
@@ -39,12 +46,15 @@ Każda funkcja opisana jest w formacie *User Story*:
 
 | Kategoria | Wymaganie | Wartość / parametr |
 |---|---|---|
-| Wydajność | Czas odpowiedzi modelu (Ollama, GPU) | < 10 s dla typowego pytania |
+| Wydajność | Czas odpowiedzi (Ollama, GPU, `qwen3:8b`) | < 10 s dla typowego pytania; zmierzone przez API: pierwszy token 0.8 s, całość 6.4 s (mediana) z `LLM_REASONING_EFFORT=none` — bez tego 6.5–8 s i 14–16 s ([API](api.md), 3.2) |
+| Wydajność | Wyszukiwanie (embedding pytania, SQL, próg) | ~0.1 s |
 | Wydajność | Czas pierwszego uruchomienia (pobranie `BAAI/bge-m3`) | Jednorazowo ~5 min (~2 GB) |
 | Wydajność | Reranking (opcjonalny, `RERANK=true`) | ~90 ms na pytanie na GPU (20 fragmentów, fp16); na CPU ~6 s — tylko z GPU |
 | Wydajność | Crawl inkrementalny — kolejne przebiegi | Pobiera tylko zmienione strony |
 | Bezpieczeństwo | Klucze i hasła | Wyłącznie w `.env` (nie trafia do gita) |
 | Bezpieczeństwo | Zakres odpowiedzi | Bot odpowiada wyłącznie na podstawie pobranego kontekstu |
+| Bezpieczeństwo | API HTTP | Walidacja i limity wielkości żądań; brak uwierzytelniania i limitu zapytań — w sieci tylko za reverse proxy |
+| Niezawodność | API HTTP | Limity czasu na LLM (`LLM_TIMEOUT`) i bazę (`DB_TIMEOUT`); błąd kończy strumień zdarzeniem `error` |
 | Kompatybilność | System operacyjny | Linux, macOS, Windows (Python 3.11+) |
 | Kompatybilność | Interpreter | Python 3.11 lub nowszy |
 | Środowisko | Baza danych | PostgreSQL 16 z rozszerzeniem pgvector |
@@ -108,7 +118,9 @@ uruchomieniu) — `infra/init.sql` wykonuje się tylko przy pierwszym starcie ko
 
 ## 1.5 Makiety UI
 
-Aplikacja posiada interfejs terminalowy (CLI). Schemat sesji:
+Aplikacja posiada interfejs terminalowy (CLI) i API HTTP dla strony WWW (interfejs
+przeglądarkowy jest w przygotowaniu — kontrakt zdarzeń: [API](api.md), 3.1). Schemat
+sesji w terminalu:
 
 ```text
 ============================================================

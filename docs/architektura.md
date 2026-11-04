@@ -213,6 +213,8 @@ pliki binarne (PDF, obrazy, archiwa, dokumenty Office, audio/wideo).
 | Ollama | zalecane | Lokalny serwer modelu z API zgodnym z OpenAI |
 | vLLM | ≥ 0.9.0, wymaga GPU NVIDIA | Alternatywny serwer modelu dla środowisk z GPU |
 | Docker Compose | v2+ | Konteneryzacja bazy danych PostgreSQL |
+| FastAPI + uvicorn | ASGI, Server-Sent Events | API HTTP dla strony WWW (`usbot/api/`) |
+| psycopg_pool | pula połączeń psycopg 3 | Połączenia z bazą współdzielone przez żądania API |
 
 ### Zależności Python (`requirements.txt`)
 

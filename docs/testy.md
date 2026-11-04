@@ -11,7 +11,12 @@
   `pgvector/pgvector:pg16` (ten sam obraz co w `docker-compose.yml`), wgrywają schemat
   z `infra/init.sql` i kilkanaście fragmentów z embeddingami przygotowanymi w fixture.
   Baza deweloperska (`docker compose`) nie jest używana ani zmieniana.
-- **Postman / curl** — manualne testy API modelu językowego.
+- **FastAPI `TestClient`** (httpx) — testy endpointów API (`tests/unit/test_api.py`) z
+  atrapą `ChatService` albo prawdziwym `ChatService` na atrapach portów; strumień SSE
+  parsowany w teście. Testy asynchroniczne (`stream_events()`) przez wtyczkę pytest z
+  pakietu `anyio` (instalowany z FastAPI).
+- **curl / `evaluation/latency.py`** — manualne testy API HTTP i pomiar czasów odpowiedzi
+  na prawdziwym serwerze z Ollamą; Postman / curl — testy API modelu językowego.
 
 ## 6.2 Plan testów
 
@@ -64,7 +69,7 @@ pip install -r requirements-dev.txt
 # Wszystkie testy (bez Dockera integracyjne są pomijane)
 pytest
 
-# Testy jednostkowe — bez Dockera, bazy, modeli i serwera LLM (< 1 s)
+# Testy jednostkowe — bez Dockera, bazy, modeli i serwera LLM (kilka sekund)
 pytest tests/unit -v
 
 # Testy integracyjne — wymagają działającego Dockera (Docker Desktop); testcontainers
