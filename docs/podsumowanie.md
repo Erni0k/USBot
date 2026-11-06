@@ -121,14 +121,19 @@
   długości (`422`), rate limiting na IP (slowapi), limit równoległych strumieni; CORS tylko
   dla frontendu, nagłówki bezpieczeństwa; dziennik rozmów bez IP z retencją 30 dni;
   przegląd zależności (`pip-audit`) i sekretów.
+- **Strona WWW** (`web/`, Vite + React + TypeScript, [UI/UX](ui-ux.md)): odpowiedź
+  strumieniowana z SSE z przyciskiem „Zatrzymaj”, źródła jako karty, przyciski wydziałów po
+  `clarify`, historia w `sessionStorage`, komunikaty limitów (`429`/`503`), tryb ciemny i
+  dostępność WCAG 2.1 AA (klawiatura, `aria-live` zdaniami, skalowanie tekstu); testy
+  Vitest i E2E w headless Chrome.
 - Tryb rozumowania Qwen3 (`ENABLE_THINKING`; na Ollamie wyłączany przez
   `LLM_REASONING_EFFORT=none`, bo Ollama ignoruje `ENABLE_THINKING`) i pełna konfiguracja
   przez `.env`.
 
 ### Niezrealizowane (planowane)
 
-- Interfejs przeglądarkowy (frontend) — API HTTP jest gotowe, strony WWW jeszcze nie ma;
-  mapowanie zdarzeń na widoki: [UI/UX](ui-ux.md) (5.4).
+- Endpoint ocen odpowiedzi (`POST /api/feedback`, etap 7A) — przyciski 👍/👎 na stronie WWW
+  są gotowe, ale wyłączone ([UI/UX](ui-ux.md), 5.3).
 - Część testów z planu (crawler, chunking, ekstrakcja — T01, T06–T10, T14, T15).
 - CI/CD (GitHub Actions) — nieskonfigurowane w obecnej wersji.
 - Uwierzytelnianie użytkowników — brak (API jest publiczne; chronią je limity na IP).
@@ -146,9 +151,8 @@
 
 ## 7.3 Kierunki rozwoju
 
-- **Strona WWW** — frontend na API HTTP (strumień SSE, przyciski wydziałów, lista
-  źródeł); przerwanie odpowiedzi także w trakcie rozumowania Qwen3 (dziś dopiero po jego
-  końcu, gdy rozumowanie jest włączone).
+- **Strona WWW** — przerwanie odpowiedzi także w trakcie rozumowania Qwen3 (dziś dopiero
+  po jego końcu, gdy rozumowanie jest włączone); oceny odpowiedzi po etapie 7A.
 - **Lepszy RAG hybrydowy** — tryb `hybrid` istnieje, ale przegrywa z wektorowym; traci
   też na rozwijaniu skrótów wydziałów (pełna nazwa przyciąga aktualności wydziału). Do
   sprawdzenia: ranking pełnotekstowy ważący rzadkie słowa (BM25/IDF), próg uwzględniający

@@ -118,9 +118,9 @@ uruchomieniu) — `infra/init.sql` wykonuje się tylko przy pierwszym starcie ko
 
 ## 1.5 Makiety UI
 
-Aplikacja posiada interfejs terminalowy (CLI) i API HTTP dla strony WWW (interfejs
-przeglądarkowy jest w przygotowaniu — kontrakt zdarzeń: [API](api.md), 3.1). Schemat
-sesji w terminalu:
+Aplikacja posiada interfejs terminalowy (CLI) i stronę WWW (`web/`) korzystającą z API
+HTTP — widoki strony i zrzuty ekranu: [Interfejs UI/UX](ui-ux.md). Schemat sesji w
+terminalu:
 
 ```text
 ============================================================

@@ -106,8 +106,8 @@ curl -N http://127.0.0.1:8000/api/chat -H 'Content-Type: application/json' \
   każde nowe połączenie z Ollamą czeka ~2–3 s na nieudaną próbę przez IPv6.
 - Na Ollamie `ENABLE_THINKING=false` nie wyłącza rozumowania Qwen3; zrób to przez
   `LLM_REASONING_EFFORT=none` (pierwszy token kilka razy szybciej — [API](api.md), 3.2).
-- Frontend z innego originu (np. serwer deweloperski na `:5173`) wymaga
-  `API_CORS_ORIGINS=http://localhost:5173`. Dokumentację OpenAPI (`/docs`) włącza lokalnie
+- Frontend z innego originu wymaga `API_CORS_ORIGINS` (np. `https://czat.example.pl`);
+  serwer deweloperski strony (`npm run dev`, krok 7c) idzie przez proxy i go nie potrzebuje. Dokumentację OpenAPI (`/docs`) włącza lokalnie
   `API_DOCS=true`.
 
 !!! warning "Publiczne wdrożenie"
@@ -135,6 +135,29 @@ curl -N http://127.0.0.1:8000/api/chat -H 'Content-Type: application/json' \
   kolei (blokada na modelu), a równoległe odpowiedzi LLM-a obsługuje serwer modelu.
 
 Kontrakt endpointów i format zdarzeń SSE: [Dokumentacja API](api.md) (3.1).
+
+### Krok 7c — Strona WWW (czat w przeglądarce)
+
+Wymaga Node.js 22.12+ i działającego API (krok 7b).
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Czat jest pod `http://localhost:5173`. Serwer deweloperski Vite przekazuje `/api` do
+`http://127.0.0.1:8000` (proxy), więc strona i API są dla przeglądarki jednym originem —
+`API_CORS_ORIGINS` nie jest potrzebne. Inny adres API (np. `--port 8080` przy vLLM):
+`VITE_DEV_PROXY_TARGET=http://127.0.0.1:8080` w `web/.env` (wzór: `web/.env.example`).
+
+Wdrożenie: `npm run build` tworzy statyczne pliki w `web/dist/`. Najprościej serwować je
+z tego samego reverse proxy co API (`/` → `web/dist/`, `/api` → uvicorn). Gdy strona jest
+pod innym originem niż API, ustaw w `web/.env` przed budowaniem
+`VITE_API_BASE_URL=https://api.example.pl`, a w `.env` API —
+`API_CORS_ORIGINS=https://czat.example.pl`.
+
+Opis interfejsu, stanów i dostępności: [Interfejs UI/UX](ui-ux.md).
 
 ### Krok 8 — Testy (opcjonalnie)
 

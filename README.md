@@ -5,7 +5,7 @@ Chatbot dla Uniwersytetu Śląskiego w Katowicach oparty o lokalnie hostowany mo
 trzymane w pgvector).
 
 ```
-Użytkownik: terminal (cli.py) albo strona WWW (API HTTP: uvicorn usbot.api.main:app)
+Użytkownik: terminal (cli.py) albo strona WWW (web/ → API HTTP: uvicorn usbot.api.main:app)
        │
        ▼
     ChatService (usbot/core) — odpowiedź jako strumień zdarzeń (w API: Server-Sent Events)
@@ -32,6 +32,7 @@ us-chatbot/
 │   ├── adapters/       # bge-m3, cross-encoder, pgvector (vector/hybrid, pula), API OpenAI
 │   ├── api/            # FastAPI: POST /api/chat (SSE), /api/health, /api/faculties
 │   └── bootstrap.py    # składanie adapterów według ustawień
+├── web/                # strona WWW: Vite + React + TS (czat SSE, źródła, wydziały)
 ├── tests/              # pytest: unit/ (atrapy portów), integration/ (testcontainers)
 ├── requirements.txt    # zależności Python
 ├── requirements-dev.txt # + pytest, testcontainers
@@ -53,6 +54,7 @@ us-chatbot/
 - Python 3.11+
 - Docker + Docker Compose (dla Postgres z pgvector)
 - Ollama (zalecane) lub vLLM (wymaga karty NVIDIA)
+- Node.js 22.12+ (tylko strona WWW w `web/`)
 
 ## 1. Konfiguracja
 
@@ -260,6 +262,34 @@ Modele, pula połączeń z bazą i klient LLM-a ładują się raz, przy starcie 
 sekund). Rozłączenie klienta przerywa generowanie. Przy vLLM na porcie 8000 uruchom API
 na innym (`--port 8080`). Kontrakt, kody błędów, przykład klienta w JS i czasy odpowiedzi:
 `docs/api.md` (3.1–3.2).
+
+### Strona WWW (czat w przeglądarce)
+
+Frontend w `web/` (Vite + React + TypeScript, bez bibliotek UI). Wymaga Node.js 22.12+
+i działającego API z poprzedniego kroku.
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:5173 — /api przechodzi przez proxy do 127.0.0.1:8000
+```
+
+Konfiguracja (`web/.env`, wzór w `web/.env.example`):
+
+| Zmienna | Domyślnie | Opis |
+|---|---|---|
+| `VITE_API_BASE_URL` | puste | Adres API widziany z przeglądarki. Puste = ten sam origin (`/api`): w dev przez proxy Vite, w produkcji przez reverse proxy. Inny origin wymaga `API_CORS_ORIGINS` w API |
+| `VITE_DEV_PROXY_TARGET` | `http://127.0.0.1:8000` | Dokąd `npm run dev` / `npm run preview` przekazuje `/api` (np. `:8080` przy vLLM na 8000) |
+| `VITE_FEEDBACK_ENABLED` | `false` | Oceny 👍/👎 (`POST /api/feedback`, etap 7A); `false` = przyciski widoczne, ale wyłączone |
+
+```bash
+npm test           # Vitest: parser SSE, historia, Markdown
+npm run build      # typecheck + statyczne pliki w web/dist/ (serwuj z tego samego originu co /api)
+npm run e2e        # headless Chrome na działającym czacie: scenariusze + zrzuty do docs/img/ui
+```
+
+Stany interfejsu, obsługa zdarzeń SSE, dostępność (WCAG 2.1 AA) i zrzuty ekranu:
+`docs/ui-ux.md`.
 
 ## Testy
 

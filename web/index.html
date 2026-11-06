@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="USBot — asystent odpowiadający na pytania o Uniwersytet Śląski na podstawie stron us.edu.pl" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>USBot — asystent Uniwersytetu Śląskiego</title>
+    <script>
+      // Motyw i rozmiar tekstu przed pierwszym malowaniem (bez mignięcia jasnego tła).
+      try {
+        var t = localStorage.getItem("usbot.theme");
+        if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+        var f = Number(localStorage.getItem("usbot.fontScale"));
+        if (f >= 0.875 && f <= 1.5) document.documentElement.style.fontSize = f * 100 + "%";
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>Czat wymaga włączonej obsługi JavaScriptu.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

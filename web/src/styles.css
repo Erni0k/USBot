@@ -1,0 +1,759 @@
+/* USBot — style. Kolory jako zmienne: jasny i ciemny motyw (systemowy albo wybrany).
+   Kontrast tekstu ≥ 4.5:1, elementów interfejsu ≥ 3:1 (WCAG 2.1 AA). Rozmiary w rem —
+   skalują się z ustawieniem przeglądarki i przyciskami A−/A+. */
+
+:root {
+  color-scheme: light;
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --surface-2: #eef2f8;
+  --text: #1a2233;
+  --text-muted: #4a5468; /* 7.6:1 na --surface */
+  --border: #8a94a8; /* 3.1:1 — obramowania pól */
+  --border-soft: #d5dbe6;
+  --primary: #1d3f8a; /* 9.9:1 na białym */
+  --primary-hover: #152f69;
+  --on-primary: #ffffff;
+  --user-bg: #1d3f8a;
+  --user-text: #ffffff;
+  --link: #1a4fb5;
+  --focus: #b3470b; /* obwódka fokusu: 5.3:1 na białym, odróżnia się od niebieskich elementów */
+  --danger: #a3141f;
+  --danger-bg: #fdecee;
+  --warn-bg: #fff4d6;
+  --warn-border: #8a6100;
+  --code-bg: #eef1f6;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 10%);
+  --radius: 0.75rem;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0f131b;
+    --surface: #181e2a;
+    --surface-2: #222a39;
+    --text: #e7ebf3;
+    --text-muted: #aab3c5; /* 8.0:1 na --surface */
+    --border: #7c869b;
+    --border-soft: #2f384a;
+    --primary: #8fb0ff; /* 7.9:1 na --surface */
+    --primary-hover: #b0c8ff;
+    --on-primary: #0d1424;
+    --user-bg: #2b4a92;
+    --user-text: #ffffff;
+    --link: #9dbbff;
+    --focus: #ffb36b;
+    --danger: #ff9ba3;
+    --danger-bg: #3a1d22;
+    --warn-bg: #3a3014;
+    --warn-border: #e0b34a;
+    --code-bg: #222a39;
+    --shadow: none;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f131b;
+  --surface: #181e2a;
+  --surface-2: #222a39;
+  --text: #e7ebf3;
+  --text-muted: #aab3c5;
+  --border: #7c869b;
+  --border-soft: #2f384a;
+  --primary: #8fb0ff;
+  --primary-hover: #b0c8ff;
+  --on-primary: #0d1424;
+  --user-bg: #2b4a92;
+  --user-text: #ffffff;
+  --link: #9dbbff;
+  --focus: #ffb36b;
+  --danger: #ff9ba3;
+  --danger-bg: #3a1d22;
+  --warn-bg: #3a3014;
+  --warn-border: #e0b34a;
+  --code-bg: #222a39;
+  --shadow: none;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 1rem;
+  line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+}
+
+a {
+  color: var(--link);
+  text-underline-offset: 0.15em;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: 0.5rem;
+  top: -10rem;
+  z-index: 10;
+  padding: 0.5rem 1rem;
+  background: var(--surface);
+  color: var(--link);
+  border: 2px solid var(--focus);
+  border-radius: 0.5rem;
+}
+.skip-link:focus {
+  top: 0.5rem;
+}
+
+/* ---------- układ ---------- */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 56rem;
+  margin: 0 auto;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.brand h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+.tagline {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.logo {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.6rem;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.brand {
+  margin-right: auto;
+}
+
+.settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.875rem;
+}
+.setting {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--text-muted);
+}
+.setting select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.4rem;
+  min-height: 2.25rem;
+}
+.scale {
+  min-width: 2.75rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+  .log {
+    scroll-behavior: auto;
+  }
+}
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin: 0.75rem 1rem 0;
+  padding: 0.75rem 1rem;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius);
+}
+.banner p {
+  margin: 0;
+}
+
+/* ---------- przyciski ---------- */
+
+.button,
+.icon-button,
+.example,
+.faculty-button,
+.button-link {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 0.5rem;
+  min-height: 2.75rem; /* cel dotyku ≥ 44 px */
+}
+.button {
+  padding: 0.5rem 1rem;
+  border: 1px solid transparent;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.button.primary {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.button.primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+.button.secondary {
+  background: var(--surface);
+  color: var(--primary);
+  border-color: var(--border);
+}
+.button.secondary:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.button.stop {
+  background: var(--surface);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.button:disabled,
+.icon-button:disabled,
+.example:disabled,
+.faculty-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.icon-button {
+  min-width: 2.75rem;
+  padding: 0.25rem 0.5rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.icon-button:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.icon-button[aria-pressed="true"] {
+  background: var(--surface-2);
+  border-color: var(--primary);
+  border-width: 2px;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--link);
+  font-weight: 600;
+  text-decoration: none;
+}
+.button-link:hover {
+  background: var(--surface-2);
+  text-decoration: underline;
+}
+
+/* ---------- powitanie ---------- */
+
+.welcome {
+  max-width: 40rem;
+  margin: 2rem auto;
+  text-align: center;
+}
+.welcome h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+}
+.welcome p {
+  color: var(--text-muted);
+}
+.examples-title {
+  margin: 1.5rem 0 0.75rem;
+  font-size: 1rem;
+}
+.examples {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.5rem;
+}
+.example {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  text-align: left;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-soft);
+  box-shadow: var(--shadow);
+}
+.example:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+
+/* ---------- wiadomości ---------- */
+
+.turns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.msg {
+  border-radius: var(--radius);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.msg-user {
+  align-self: flex-end;
+  max-width: min(36rem, 85%);
+  padding: 0.6rem 1rem;
+  background: var(--user-bg);
+  color: var(--user-text);
+  border-bottom-right-radius: 0.25rem;
+}
+.msg-text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.msg-bot {
+  align-self: stretch;
+  padding: 0.85rem 1.1rem;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-bottom-left-radius: 0.25rem;
+  box-shadow: var(--shadow);
+}
+
+.answer > :first-child {
+  margin-top: 0;
+}
+.answer > :last-child {
+  margin-bottom: 0;
+}
+.answer p,
+.answer ul,
+.answer ol {
+  margin: 0.5rem 0;
+}
+.answer ul,
+.answer ol {
+  padding-left: 1.5rem;
+}
+.answer li + li {
+  margin-top: 0.2rem;
+}
+.answer .md-h {
+  margin: 0.9rem 0 0.35rem;
+  font-size: 1.05rem;
+  line-height: 1.3;
+}
+.answer code {
+  background: var(--code-bg);
+  padding: 0.05rem 0.3rem;
+  border-radius: 0.25rem;
+  font-size: 0.92em;
+}
+.answer pre {
+  background: var(--code-bg);
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+}
+.answer pre code {
+  padding: 0;
+  background: none;
+}
+
+.cursor {
+  display: inline-block;
+  width: 0.5em;
+  height: 1.1em;
+  margin-left: 0.1em;
+  vertical-align: text-bottom;
+  background: var(--primary);
+  animation: blink 1s steps(2, start) infinite;
+}
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  color: var(--text-muted);
+}
+.dots {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+.dots span {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cursor,
+  .dots span {
+    animation: none;
+  }
+}
+
+.note {
+  margin: 0.5rem 0 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.refused {
+  border-left: 4px solid var(--warn-border);
+  padding-left: 0.75rem;
+}
+
+.error {
+  color: var(--text);
+}
+.error-label {
+  font-weight: 700;
+  color: var(--danger);
+}
+.error .button {
+  margin-top: 0.25rem;
+}
+
+/* ---------- dopytanie o wydział ---------- */
+
+.faculty-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.faculty-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.faculty-button:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--primary);
+}
+.faculty-code {
+  flex-shrink: 0;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.3rem;
+  background: var(--surface-2);
+  color: var(--primary);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+/* ---------- źródła ---------- */
+
+.sources {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-soft);
+}
+.sources-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.source-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.5rem;
+}
+.source-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 0.5rem;
+}
+.source-card:hover {
+  border-color: var(--primary);
+}
+.source-link {
+  font-weight: 600;
+  line-height: 1.35;
+}
+/* Cała karta klikalna, ale w drzewie dostępności jest jeden link */
+.source-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.source-link:focus-visible {
+  outline: none;
+}
+.source-card:has(.source-link:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.source-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.source-host {
+  overflow-wrap: anywhere;
+}
+.source-tag {
+  padding: 0 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+}
+
+/* ---------- oceny ---------- */
+
+.feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.feedback .icon-button {
+  min-height: 2.25rem;
+  min-width: 2.25rem;
+}
+.feedback-note:empty {
+  display: none;
+}
+
+/* ---------- pole pytania ---------- */
+
+.composer {
+  padding: 0.5rem 1rem 0.75rem;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg);
+}
+.composer-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+.composer textarea {
+  flex: 1;
+  min-height: 2.75rem;
+  max-height: 12rem;
+  resize: vertical;
+  padding: 0.6rem 0.75rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+}
+.composer textarea::placeholder {
+  color: var(--text-muted);
+}
+.composer textarea[aria-invalid="true"] {
+  border-color: var(--danger);
+  border-width: 2px;
+}
+.composer-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.count {
+  font-variant-numeric: tabular-nums;
+}
+.count.over {
+  color: var(--danger);
+  font-weight: 700;
+}
+kbd {
+  font-family: inherit;
+  font-size: 0.75rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  background: var(--surface);
+}
+
+/* ---------- stały disclaimer ---------- */
+
+.disclaimer {
+  padding: 0.5rem 1rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+.disclaimer p {
+  margin: 0;
+}
+.disclaimer strong {
+  color: var(--text);
+}
+
+@media (max-width: 40rem) {
+  .tagline {
+    display: none;
+  }
+  .header {
+    padding: 0.5rem 0.75rem;
+  }
+  /* Telefon: logo i „Nowa rozmowa” w pierwszym wierszu, ustawienia w drugim */
+  .settings {
+    order: 3;
+    width: 100%;
+  }
+  .log {
+    padding: 0.75rem;
+  }
+  .composer,
+  .disclaimer {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+  .privacy {
+    display: block;
+  }
+}
+
+/* Wymuszone kolory (tryb wysokiego kontrastu Windows) */
+@media (forced-colors: active) {
+  .msg-user,
+  .msg-bot,
+  .source-card {
+    border: 1px solid CanvasText;
+  }
+  .dots span,
+  .cursor {
+    background: CanvasText;
+  }
+}
