@@ -3,6 +3,8 @@
 //   npm run e2e                         → zrzuty do ../docs/img/ui
 //   node scripts/e2e.mjs <katalog> [scenariusz...]   np. clarify stop
 // Zmienne: CHROME (ścieżka do Chrome/Edge), WEB_URL (domyślnie http://localhost:5173/).
+// WEB_URL=https://localhost/ — wdrożenie z compose.prod.yml (certyfikat z lokalnego CA
+// Caddy jest wtedy akceptowany: --ignore-certificate-errors tylko dla localhost).
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,7 +27,9 @@ const profile = join(tmpdir(), "usbot-e2e-profile-" + Date.now());
 
 const chrome = spawn(CHROME, [
   "--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
-  "--no-first-run", "--hide-scrollbars", "--lang=pl-PL", "about:blank",
+  "--no-first-run", "--hide-scrollbars", "--lang=pl-PL",
+  ...(/^https:\/\/localhost[:/]/.test(URL_) ? ["--ignore-certificate-errors"] : []),
+  "about:blank",
 ], { stdio: "ignore" });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

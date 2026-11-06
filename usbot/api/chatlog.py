@@ -24,6 +24,7 @@ import secrets
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -73,6 +74,17 @@ class ChatLog:
         self.max_question_chars = max_question_chars
         self.salt = DailySalt()
         self._lock = threading.Lock()
+        # Odbiorcy każdego rekordu (np. metryki) — także przy wyłączonym dzienniku
+        self.listeners: list[Callable[[dict], None]] = []
+
+    def publish(self, record: dict) -> None:
+        """Rekord jednej odpowiedzi: do odbiorców i (jeśli włączony) do pliku."""
+        for listener in self.listeners:
+            try:
+                listener(record)
+            except Exception:  # noqa: BLE001 — metryki nie mogą zatrzymać odpowiedzi
+                log.exception("odbiorca rekordu dziennika rzucił wyjątek")
+        self.write(record)
 
     def client_id(self, ip: str | None) -> str | None:
         return self.salt.hash(ip) if ip else None
@@ -160,7 +172,7 @@ class ChatTrace:
     def close(self, *, cancelled: bool = False) -> None:
         if cancelled and self.outcome not in ("error",):
             self.record["cancelled"] = True
-        self.chatlog.write({
+        self.chatlog.publish({
             **self.record,
             "outcome": self.outcome or ("cancelled" if cancelled else "error"),
             "ms_sources": self._ms(self._sources) if self._sources else None,

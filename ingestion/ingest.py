@@ -370,7 +370,7 @@ def run() -> None:
             if page.status == "unchanged":
                 n_same += 1
                 _touch_page(conn, page)
-                bar.set_postfix_str("= " + page.url.removeprefix("https://us.edu.pl")[:50])
+                bar.set_postfix_str("= " + page.url.removeprefix("https://us.edu.pl")[:50], refresh=False)
                 continue
 
             if not page.text:
@@ -383,7 +383,7 @@ def run() -> None:
             if old_hash and new_hash == old_hash:
                 n_same += 1
                 _touch_page(conn, page)
-                bar.set_postfix_str("= " + page.url.removeprefix("https://us.edu.pl")[:50])
+                bar.set_postfix_str("= " + page.url.removeprefix("https://us.edu.pl")[:50], refresh=False)
                 continue
 
             # Strona nowa lub zmieniona -> do embeddingu
@@ -399,7 +399,7 @@ def run() -> None:
                 "links": page.links,
                 "hash": new_hash,
             })
-            bar.set_postfix_str("+ " + page.url.removeprefix("https://us.edu.pl")[:50])
+            bar.set_postfix_str("+ " + page.url.removeprefix("https://us.edu.pl")[:50], refresh=False)
 
             if len(pending) >= EMBED_BATCH:
                 flush()

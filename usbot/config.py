@@ -108,6 +108,9 @@ class Settings(BaseSettings):
     # ustaw nagłówek tam albo tutaj).
     api_hsts_seconds: int = Field(0, ge=0)
 
+    # Format logów API: text (lokalnie) albo json (kontenery — jeden obiekt na linię).
+    log_format: Annotated[Literal["text", "json"], BeforeValidator(_lower)] = "text"
+
     # --- dziennik rozmów (usbot/api/chatlog.py, opis: docs/architektura.md) ---
     chat_log_enabled: EnvBool = True
     chat_log_dir: str = str(ROOT / "logs")

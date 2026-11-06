@@ -1,3 +1,4 @@
+# Lokalnie: sama baza (port 5433) — cli.py, API i ingestia uruchamiane na hoście.
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -11,31 +12,8 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./infra/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
 
-  # ---------------------------------------------------------------------------
-  # Serwowanie modelu Qwen3 przez vLLM.
-  # Odkomentuj TYLKO jeśli masz GPU NVIDIA + nvidia-container-toolkit.
-  # Bez GPU uruchom Ollama na hoście (ollama serve) i ustaw LLM_BASE_URL w .env.
-  # ---------------------------------------------------------------------------
-  # vllm:
-  #   image: vllm/vllm-openai:latest
-  #   command: >
-  #     --model Qwen/Qwen3-1.7B
-  #     --served-model-name qwen3
-  #     --max-model-len 8192
-  #     --gpu-memory-utilization 0.85
-  #     --reasoning-parser qwen3
-  #     --default-chat-template-kwargs {"enable_thinking": false}
-  #   ports:
-  #     - "8000:8000"
-  #   volumes:
-  #     - ./models:/root/.cache/huggingface
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: 1
-  #             capabilities: [gpu]
+  # vLLM, API, strona i harmonogram ingestii (wdrożenie z GPU): compose.prod.yml,
+  # opis w docs/uruchomienie.md (4.5). Lokalnie model serwuje Ollama na hoście.
 
 volumes:
   pgdata:

@@ -1,8 +1,10 @@
-# Kontekst budowania obrazu Dockera (przyszły obraz API) — bez sekretów i danych.
+# Kontekst budowania obrazów Dockera (Dockerfile, web/Dockerfile) — bez sekretów i danych.
 # Sekrety (.env) przekazuje się kontenerowi przy uruchomieniu (env_file / zmienne
 # środowiskowe), nigdy nie są kopiowane do obrazu.
 .env
 .env.*
+**/.env
+**/.env.local
 !.env.example
 logs/
 data/
@@ -17,3 +19,12 @@ venv/
 .pytest_cache/
 *.log
 prompty-rozwoju.md
+# frontend: zależności i build powstają w obrazie (web/Dockerfile)
+web/node_modules/
+web/dist/
+# niepotrzebne w obrazach
+docs/
+tests/
+evaluation/
+baseline-*.json
+.claude/

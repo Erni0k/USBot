@@ -22,6 +22,7 @@ nagłówki, dziennik rozmów) opisuje [Architektura](architektura.md) (2.4).
 | `POST` | `/api/chat` | `text/event-stream` | Odpowiedź na pytanie jako strumień zdarzeń SSE |
 | `GET` | `/api/health` | JSON, `200` / `503` | Stan bazy, modelu embeddingów (i rerankera) oraz LLM-a |
 | `GET` | `/api/faculties` | JSON | Wydziały — np. przyciski po zdarzeniu `clarify` |
+| `GET` | `/api/metrics` | tekst Prometheusa | Liczniki odpowiedzi, odsetek `refused`, czas do 1. tokenu — **niepubliczny** (Caddy odpowiada 404; 3.1, „GET /api/metrics”) |
 
 **Serwer jest bezstanowy.** Historię rozmowy trzyma klient i przysyła ją w każdym żądaniu;
 serwer bierze z niej tylko `API_HISTORY_TURNS` (domyślnie 5) ostatnich tur (tura = pytanie i
@@ -206,6 +207,36 @@ curl http://127.0.0.1:8000/api/faculties
 
 Ta sama lista co `clarify.options`. Odpowiedź skrótem („WNP”) wystarczy — w zapytaniu do
 wyszukiwarki skrót jest rozwijany do pełnej nazwy.
+
+### GET /api/metrics
+
+Metryki w formacie tekstowym Prometheusa (`text/plain; version=0.0.4`), liczone w
+pamięci procesu z tych samych rekordów co dziennik rozmów (także przy
+`CHAT_LOG_ENABLED=false`); restart je zeruje. W `compose.prod.yml` Caddy nie przepuszcza
+tej ścieżki z zewnątrz — odczyt z serwera:
+
+```bash
+docker compose -f compose.prod.yml exec api curl -s http://127.0.0.1:8000/api/metrics
+```
+
+| Metryka | Typ | Znaczenie |
+|---|---|---|
+| `usbot_chat_requests_total{outcome}` | counter | odpowiedzi według wyniku: `ok`, `refused`, `clarify`, `error`, `cancelled` (klient przerwał) |
+| `usbot_chat_errors_total{code}` | counter | zdarzenia `error` według `code` (`llm_timeout`, `db_unavailable`…) |
+| `usbot_chat_refused_ratio` | gauge | `refused / (ok + refused + clarify)` od startu procesu |
+| `usbot_chat_first_token_seconds` | histogram | czas od żądania do pierwszego tokenu (tylko odpowiedzi z LLM-a) |
+| `usbot_chat_duration_seconds` | histogram | czas całej odpowiedzi (bez przerwanych) |
+| `…_recent{quantile="0.5"}`, `{quantile="0.95"}` | gauge | mediana i p95 z ostatnich 500 odpowiedzi — do odczytu „na oko” bez Prometheusa |
+| `usbot_chat_active_streams` | gauge | odpowiedzi generowane w tej chwili (limit `API_MAX_STREAMS`) |
+| `usbot_uptime_seconds` | gauge | czas od startu procesu |
+
+```text
+usbot_chat_requests_total{outcome="ok"} 41
+usbot_chat_requests_total{outcome="refused"} 6
+usbot_chat_refused_ratio 0.122449
+usbot_chat_first_token_seconds_bucket{le="1"} 39
+usbot_chat_first_token_seconds_recent{quantile="0.5"} 0.412
+```
 
 ## 3.2 Czasy odpowiedzi API
 
@@ -427,6 +458,7 @@ wcześniejsze kopie są usuwane w tej samej transakcji (opis reguły w README).
 | `API_MAX_STREAMS` / `API_MAX_STREAMS_PER_CLIENT` | `4` / `2` | API: ile odpowiedzi generuje się naraz — w sumie (`503`) i na adres IP (`429`) |
 | `API_DOCS` | `false` | API: `true` włącza `/docs`, `/redoc`, `/openapi.json` (lokalnie; publicznie wyłączone) |
 | `API_HSTS_SECONDS` | `0` | API: `max-age` nagłówka `Strict-Transport-Security`; `0` = bez nagłówka |
+| `LOG_FORMAT` | `text` | API: `json` = logi jako jeden obiekt JSON na linię (`ts`, `level`, `logger`, `msg`; dziennik dostępu z `method`, `path`, `status`, bez IP) — w kontenerach ustawia go `compose.prod.yml` |
 | `CHAT_LOG_ENABLED` | `true` | Dziennik rozmów bez IP (Architektura, 2.4) |
 | `CHAT_LOG_DIR` | `logs/` | Katalog dziennika (plik na dobę) |
 | `CHAT_LOG_RETENTION_DAYS` | `30` | Po ilu dniach pliki dziennika są usuwane |

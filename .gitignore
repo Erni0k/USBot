@@ -23,3 +23,9 @@ prompty-rozwoju.md
 
 # dziennik rozmów API (usbot/api/chatlog.py)
 logs/
+
+# lokalne pliki konfiguracji wdrożenia (np. .env.prod)
+.env.*
+!.env.example
+# kopie bazy pobrane z wolumenu backups
+backups/

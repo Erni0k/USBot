@@ -106,7 +106,8 @@ wypisuje odpowiedź tak jak przed wydzieleniem warstw (źródeł osobno nie poka
 | `sse.py` | `stream_events()`: zdarzenia `ChatService` → Server-Sent Events; błędy adapterów → zdarzenie `error` z kodem |
 | `schemas.py` | modele żądań i odpowiedzi (pydantic), `check_limits()` — limity długości pytania i historii |
 | `limits.py` | limit równoległych strumieni (`StreamSlots`), limit wielkości ciała, nagłówki bezpieczeństwa |
-| `chatlog.py` | dziennik rozmów bez IP, retencja i czyszczenie (2.4) |
+| `chatlog.py` | dziennik rozmów bez IP, retencja i czyszczenie (2.4); `publish()` przekazuje każdy rekord także do metryk |
+| `metrics.py` | `GET /api/metrics`: liczniki odpowiedzi według wyniku, odsetek `refused`, histogramy czasu do 1. tokenu i całej odpowiedzi (format Prometheusa, w pamięci procesu) |
 
 Serwer jest bezstanowy: historię przysyła klient, a `ChatService` (parametr
 `max_history_turns`, zmienna `API_HISTORY_TURNS`) bierze z niej tylko ostatnie tury —
@@ -214,8 +215,11 @@ pliki binarne (PDF, obrazy, archiwa, dokumenty Office, audio/wideo).
 | BAAI/bge-reranker-v2-m3 | ~2.3 GB, sentence-transformers `CrossEncoder`, fp16 na GPU | Opcjonalny reranking kandydatów (`RERANK=true`) |
 | Qwen3 | domyślnie `qwen3:8b` | Model językowy (LLM) generujący odpowiedzi |
 | Ollama | zalecane | Lokalny serwer modelu z API zgodnym z OpenAI |
-| vLLM | ≥ 0.9.0, wymaga GPU NVIDIA | Alternatywny serwer modelu dla środowisk z GPU |
-| Docker Compose | v2+ | Konteneryzacja bazy danych PostgreSQL |
+| vLLM | 0.33 (obraz `vllm/vllm-openai`), wymaga GPU NVIDIA | Serwer modelu we wdrożeniu (`compose.prod.yml`); lokalnie alternatywa dla Ollamy |
+| Docker Compose | v2+ | Lokalnie baza (`docker-compose.yml`); wdrożenie całości z GPU (`compose.prod.yml`, [Uruchomienie](uruchomienie.md) 4.5) |
+| Caddy | 2.11 | Wdrożenie: statyczny frontend, reverse proxy `/api` bez buforowania SSE, automatyczny TLS |
+| supercronic | 0.2 | Wdrożenie: harmonogram ingestii w kontenerze (bez roota i bez gniazda Dockera) |
+| Vite + React + TypeScript | Vite 8, React 19 | Strona WWW (`web/`, [UI/UX](ui-ux.md)) |
 | FastAPI + uvicorn | ASGI, Server-Sent Events | API HTTP dla strony WWW (`usbot/api/`) |
 | psycopg_pool | pula połączeń psycopg 3 | Połączenia z bazą współdzielone przez żądania API |
 
@@ -395,8 +399,9 @@ nadużyć (seria pytań z jednego adresu w ciągu dnia). Plik JSON Lines na dob�
 | `retrieval_mode`, `rerank_on` | konfiguracja wyszukiwania | porównanie konfiguracji |
 
 **Czego nie zapisujemy:** adresu IP (ani w dzienniku, ani w logach uvicorna i slowapi —
-filtr `_HideClientAddress` w `usbot/api/main.py`), treści odpowiedzi, historii rozmowy,
-nagłówków (User-Agent, Origin). Sól skrótu IP jest losowana przy zmianie doby i nigdzie
+filtr `_HideClientAddress` w `usbot/api/main.py`; we wdrożeniu także nie w dzienniku
+dostępu Caddy — `format filter` w `infra/Caddyfile` usuwa adres, port, nagłówki i dane TLS),
+treści odpowiedzi, historii rozmowy, nagłówków (User-Agent, Origin). Sól skrótu IP jest losowana przy zmianie doby i nigdzie
 nie zapisywana — skrótu nie da się odwrócić ani powiązać między dniami czy restartami
 serwera.
 

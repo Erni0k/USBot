@@ -44,8 +44,10 @@ us-chatbot/
 │   ├── latency.py      # czas do pierwszego tokenu i całkowity przez API
 │   ├── injection.py    # próby prompt injection na LLM-ie (bieżący prompt)
 │   └── queries.jsonl   # pytania testowe z oznaczonymi URL-ami
-├── infra/              # init.sql (pgvector, unaccent, tabele chunks i pages)
-├── docker-compose.yml  # baza Postgres + opcjonalnie vLLM
+├── infra/              # init.sql (schemat bazy), Caddyfile, ingest/ (harmonogram w kontenerze)
+├── docker-compose.yml  # lokalnie: baza Postgres (port 5433)
+├── compose.prod.yml    # wdrożenie: db, llm (vLLM), api, web (Caddy), ingest, backup
+├── Dockerfile          # obraz API i ingestii (web/Dockerfile — strona + Caddy)
 └── .env.example
 ```
 
@@ -290,6 +292,19 @@ npm run e2e        # headless Chrome na działającym czacie: scenariusze + zrzu
 
 Stany interfejsu, obsługa zdarzeń SSE, dostępność (WCAG 2.1 AA) i zrzuty ekranu:
 `docs/ui-ux.md`.
+
+### Wdrożenie (Docker, GPU NVIDIA)
+
+Całość — baza, vLLM z Qwen3, API, strona z HTTPS (Caddy), harmonogram ingestii i kopie
+zapasowe — jedną komendą (wymaga NVIDIA Container Toolkit; w `.env` ustaw
+`POSTGRES_PASSWORD`, `SITE_ADDRESS`, `VLLM_MODEL` — sekcja „Wdrożenie” w `.env.example`):
+
+```bash
+docker compose -f compose.prod.yml up -d --build
+```
+
+Instrukcja krok po kroku, dobór modelu do pamięci GPU, kopie zapasowe, odtwarzanie bazy,
+aktualizacja i monitoring (`/api/metrics`, logi JSON): `docs/uruchomienie.md` (4.5).
 
 ## Testy
 

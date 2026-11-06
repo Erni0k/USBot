@@ -1,0 +1,7 @@
+# Skrypty i konfiguracje uruchamiane w kontenerach Linuksa — zawsze LF (także po
+# klonowaniu na Windows z core.autocrlf=true; CRLF psuje #!/bin/sh i crontab)
+*.sh        text eol=lf
+Caddyfile   text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.sql       text eol=lf

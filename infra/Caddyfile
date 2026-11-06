@@ -1,0 +1,75 @@
+# Caddy: statyczny frontend (web/dist) + reverse proxy /api → api:8000, TLS automatyczny.
+#
+# SITE_ADDRESS — domena (np. czat.us.edu.pl): Caddy sam pobiera i odnawia certyfikat
+# Let's Encrypt/ZeroSSL (porty 80 i 443 muszą być osiągalne z internetu, DNS → serwer).
+# SITE_ADDRESS=localhost — certyfikat z lokalnego CA Caddy (przeglądarka ostrzeże; test).
+# Konto ACME bez e-maila: Let's Encrypt nie wysyła już powiadomień o wygasaniu, a Caddy
+# sam odnawia certyfikaty ~30 dni przed końcem ważności.
+{
+	# Logi Caddy (start, certyfikaty, błędy) w JSON na stdout (docker compose logs web)
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$SITE_ADDRESS:localhost} {
+	# Dziennik dostępu w JSON bez danych identyfikujących klienta (RODO, jak w API):
+	# bez adresu IP, portu, nagłówków żądania (User-Agent, Cookie…) i szczegółów TLS
+	log {
+		output stdout
+		format filter {
+			wrap json
+			request>remote_ip delete
+			request>remote_port delete
+			request>client_ip delete
+			request>headers delete
+			request>tls delete
+			resp_headers delete
+		}
+	}
+
+	# Metryki tylko z sieci compose (docker compose exec api curl …/api/metrics). Osobny
+	# `handle`, bo samo `respond` Caddy wykonuje dopiero po `handle /api/*`; z bloków
+	# `handle` wygrywa najdokładniej pasująca ścieżka.
+	handle /api/metrics {
+		respond 404
+	}
+
+	handle /api/* {
+		reverse_proxy api:8000 {
+			# SSE: każdy token od razu do przeglądarki, bez buforowania. Rozłączenie
+			# przeglądarki zamyka połączenie do API, więc serwer przestaje generować
+			# (docs/api.md, 3.1); długie czekanie na 1. token podtrzymuje `: ping` co 10 s.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		root * /srv
+		# Kompresja tylko statycznych plików (nie strumienia SSE)
+		encode zstd gzip
+		try_files {path} /index.html
+		file_server
+
+		header {
+			# Skrypty, style i połączenia tylko z tego samego originu (theme-init.js zamiast
+			# skryptu inline); strony nie da się osadzić w ramce
+			Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
+			X-Content-Type-Options nosniff
+			X-Frame-Options DENY
+			Referrer-Policy strict-origin-when-cross-origin
+			Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		}
+		# Pliki z hashem w nazwie — na zawsze; index.html — zawsze sprawdzany
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		@html not path /assets/*
+		header @html Cache-Control "no-cache"
+	}
+
+	header {
+		Strict-Transport-Security "max-age={$HSTS_MAX_AGE:31536000}"
+		-Server
+	}
+}

@@ -14,13 +14,14 @@ from contextlib import asynccontextmanager
 import anyio
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIASGIMiddleware
 
 from usbot.api.chatlog import ChatLog
 from usbot.api.limits import BodySizeLimit, Busy, SecurityHeaders, StreamSlots
+from usbot.api.metrics import Metrics
 from usbot.api.resources import Resources, build_resources
 from usbot.api.schemas import ChatRequest, Check, Faculty, Health, check_limits
 from usbot.api.sse import stream_events
@@ -62,6 +63,8 @@ def create_app(settings: Settings | None = None,
                       enabled=settings.chat_log_enabled,
                       max_question_chars=settings.chat_log_max_question_chars)
     slots = StreamSlots(settings.api_max_streams, settings.api_max_streams_per_client)
+    metrics = Metrics()
+    chatlog.listeners.append(metrics.observe)
     limiter = Limiter(key_func=client_ip, default_limits=[settings.api_rate_limit_default],
                       storage_uri=settings.api_rate_limit_storage, strategy="moving-window")
 
@@ -90,6 +93,7 @@ def create_app(settings: Settings | None = None,
     app.state.limiter = limiter
     app.state.chatlog = chatlog
     app.state.slots = slots
+    app.state.metrics = metrics
     app.add_exception_handler(RateLimitExceeded, _rate_limited)
 
     # Kolejność: ostatnio dodany działa pierwszy. Nagłówki bezpieczeństwa i CORS obejmują
@@ -143,6 +147,13 @@ def create_app(settings: Settings | None = None,
     async def faculties() -> JSONResponse:
         """Wydziały — te same co w `clarify.options` (np. przyciski w UI)."""
         return JSONResponse(faculty_options())
+
+    @app.get("/api/metrics", response_class=PlainTextResponse, include_in_schema=False)
+    async def metrics_endpoint() -> PlainTextResponse:
+        """Liczniki w formacie Prometheusa: odpowiedzi według wyniku, odsetek refused, czas
+        do pierwszego tokenu i całej odpowiedzi. Niepubliczny — Caddy go nie przepuszcza."""
+        return PlainTextResponse(metrics.render(active_streams=slots.active),
+                                 media_type="text/plain; version=0.0.4; charset=utf-8")
 
     return app
 
@@ -219,6 +230,11 @@ def _configure_logging() -> None:
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
+    # LOG_FORMAT=json (kontenery): uvicorn skonfigurował już swoje loggery, zanim
+    # zaimportował aplikację — podmieniamy im formatter
+    if get_settings().log_format == "json":
+        from usbot.logjson import use_json
+        use_json(("usbot", "uvicorn", "uvicorn.error", "uvicorn.access", "slowapi"))
 
 
 _configure_logging()

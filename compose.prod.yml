@@ -1,0 +1,204 @@
+# Wdrożenie produkcyjne USBot na jednym serwerze z GPU NVIDIA — jedna komenda:
+#
+#   docker compose -f compose.prod.yml up -d --build
+#
+# Instrukcja krok po kroku, dobór modelu do VRAM, aktualizacja i kopie zapasowe:
+# docs/uruchomienie.md (4.5). Konfiguracja: .env (wzór: .env.example, sekcja „Wdrożenie”).
+# Na zewnątrz wystawiony jest tylko Caddy (80/443); baza, vLLM i API są w sieci compose.
+#
+# docker-compose.yml (bez -f) zostaje do pracy lokalnej: sama baza na porcie 5433.
+
+name: usbot-prod
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+# Wspólne dla api, ingest i models (ten sam obraz)
+x-app: &app
+  image: usbot-api:${USBOT_VERSION:-latest}
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file: ${USBOT_ENV_FILE:-.env}   # inny plik: --env-file X i USBOT_ENV_FILE=X w nim
+  environment: &app-env
+    # Nadpisują wartości z .env (tam adresy dla uruchomienia na hoście)
+    DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    LLM_BASE_URL: http://llm:8000/v1
+    LLM_MODEL: qwen3
+    LLM_REASONING_EFFORT: ""   # tylko dla Ollamy; vLLM wyłącza rozumowanie przez enable_thinking
+    ENABLE_THINKING: "false"
+    LOG_FORMAT: json
+    CHAT_LOG_DIR: /data/logs
+    HF_HOME: /models/hf
+    TZ: ${TZ:-Europe/Warsaw}
+  volumes:
+    - hf-cache:/models
+  <<: *logging
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.7-pg16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?ustaw POSTGRES_USER w .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ustaw POSTGRES_PASSWORD w .env}
+      POSTGRES_DB: ${POSTGRES_DB:?ustaw POSTGRES_DB w .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    shm_size: 256mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    <<: *logging
+
+  llm:
+    image: vllm/vllm-openai:${VLLM_IMAGE_TAG:-v0.33.0}
+    restart: unless-stopped
+    <<: [*gpu, *logging]
+    command:
+      - ${VLLM_MODEL:-Qwen/Qwen3-8B-AWQ}   # `vllm serve <model>` (ENTRYPOINT obrazu)
+      - --served-model-name=qwen3
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.6}
+      - --max-num-seqs=${API_MAX_STREAMS:-4}
+      - --reasoning-parser=qwen3
+      - '--default-chat-template-kwargs={"enable_thinking": false}'
+      - --disable-uvicorn-access-log
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - vllm-cache:/root/.cache/huggingface
+    ipc: host
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # Pierwszy start pobiera model (6–16 GB) i kompiluje grafy CUDA
+      start_period: 30m
+
+  # Jednorazowo: modele embeddingów (i rerankera) na wolumen hf-cache; potem api i ingest
+  # działają offline. Kolejne starty — kilka sekund (pliki już są).
+  models:
+    <<: *app
+    restart: "no"
+    command: ["python", "-m", "usbot.download_models"]
+    healthcheck:
+      disable: true
+
+  api:
+    <<: [*app, *gpu]
+    restart: unless-stopped
+    volumes:
+      - hf-cache:/models
+      - chat-logs:/data/logs
+    depends_on:
+      db:
+        condition: service_healthy
+      llm:
+        condition: service_healthy
+      models:
+        condition: service_completed_successfully
+    # healthcheck z Dockerfile: GET /api/health (baza, embeddingi, LLM) co 30 s
+
+  web:
+    image: usbot-web:${USBOT_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        VITE_FEEDBACK_ENABLED: ${VITE_FEEDBACK_ENABLED:-false}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?ustaw SITE_ADDRESS w .env (domena albo localhost)}
+      HSTS_MAX_AGE: ${HSTS_MAX_AGE:-31536000}
+    volumes:
+      - caddy-data:/data      # certyfikaty i klucze ACME — nie kasować
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    <<: *logging
+
+  # Harmonogram ingestii (supercronic w kontenerze): codziennie przyrostowo, w niedzielę
+  # CRAWL_REFETCH=true; tylko jeden przebieg naraz (flock). Pusta baza → przebieg od razu.
+  ingest:
+    <<: [*app, *gpu]
+    restart: unless-stopped
+    init: true
+    command: ["/app/infra/ingest/entrypoint.sh"]
+    environment:
+      <<: *app-env
+      INGEST_SCHEDULE: ${INGEST_SCHEDULE:-0 3 * * 1-6}
+      INGEST_REFETCH_SCHEDULE: ${INGEST_REFETCH_SCHEDULE:-0 3 * * 0}
+      INGEST_ON_EMPTY: ${INGEST_ON_EMPTY:-true}
+      TQDM_MININTERVAL: "60"   # pasek postępu w logach co minutę, nie co stronę
+    volumes:
+      - hf-cache:/models
+      - ingest-state:/data/state
+    depends_on:
+      db:
+        condition: service_healthy
+      models:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+
+  # Kopia zapasowa: pg_dump codziennie, 7 dziennych + 4 tygodniowe + 3 miesięczne
+  backup:
+    image: prodrigestivill/postgres-backup-local:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Pełny zrzut (z CREATE EXTENSION vector/unaccent) — odtwarzanie do pustej bazy
+      POSTGRES_EXTRA_OPTS: "-Z6"
+      SCHEDULE: ${BACKUP_SCHEDULE:-0 2 * * *}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
+      BACKUP_KEEP_WEEKS: ${BACKUP_KEEP_WEEKS:-4}
+      BACKUP_KEEP_MONTHS: ${BACKUP_KEEP_MONTHS:-3}
+      TZ: ${TZ:-Europe/Warsaw}
+    volumes:
+      - backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    <<: *logging
+
+volumes:
+  pgdata:
+  hf-cache:
+  vllm-cache:
+  chat-logs:
+  ingest-state:
+  caddy-data:
+  caddy-config:
+  backups:
