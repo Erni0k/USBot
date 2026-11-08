@@ -70,6 +70,8 @@ Status: ✅ — zaimplementowany (plik w kolumnie „Test”), ⏳ — planowany
 | T45 | Jednostkowy | `POST /api/feedback` | Poprawna ocena; pola niepoprawne i za długie; źródła spoza `us.edu.pl` (także `evil.example\@us.edu.pl`); e-mail, telefon i album w treściach; NUL i surogat w JSON-ie; 3 oceny przy limicie 2/min; błąd bazy | `204`, konfiguracja z ustawień serwera (próg rerankera przy `RERANK=true`); `422` bez zapisu; dane usunięte ze wszystkich treści, brak IP w rekordzie; znaki niezapisywalne usunięte; `429` z `Retry-After`; `503` bez szczegółów błędu | ✅ `unit/test_feedback.py` |
 | T46 | Jedn. + integr. | `ensure_schema()`, `PgFeedbackStore`, `init.sql` | Baza bez tabeli `feedback`; retencja; ocena spoza `-1/1` w SQL | Tabela tworzona przez API, ten sam schemat co z `init.sql`, po retencji treści `NULL`, ocena zostaje; `CHECK` odrzuca złą ocenę | ✅ `integration/test_feedback.py` |
 | T47 | Jedn. + integr. | `feedback_export.py`, `feedback_report.py`, `load_queries()` | Powtórzone pytania, dopytania, drugi eksport po oznaczeniu, zepsuty plik; tematy pytań; nieoznaczony wpis w zbiorze | Format `queries.jsonl`, dopisywane tylko nowe, oznaczenia nietknięte, zepsuty plik nie jest nadpisywany; kandydaci z obu wyszukiwań; `evaluate.py` pomija nieoznaczone | ✅ `unit/test_feedback.py`, `integration/test_feedback.py` |
+| T48 | Jednostkowy | `evaluate_answers.py` | Odmowy, adresy w odpowiedzi, dopasowanie faktów (formaty godzin, warianty odmiany, całe słowa), parsowanie werdyktu, próbka bez werdyktów, zgodność i kappa | Poprawne klasyfikacje; odmowa nie zalicza faktu; błąd sędziego nie liczy się jako wierna odpowiedź; oceny ręczne nie są nadpisywane | ✅ `unit/test_evaluate_answers.py` |
+| T49 | Manualny | odpowiedzi bota i LLM-sędzia | 79 pytań przez `ChatService`, sędzia `qwen3:8b`, 20 odpowiedzi ocenionych bez znajomości werdyktów | Wyniki i ocena wiarygodności sędziego w 6.7 | ✅ (2026-11-08) |
 | T35 | Manualny | API + Ollama | `curl -N` na `/api/chat`, przerwanie curla w trakcie, `/api/health`; `evaluation/latency.py` | Tokeny na bieżąco, źródła przed tokenami; w logu serwera „przerwano odpowiedź”; czasy w docs/api.md (3.2) | ✅ (2026-11-04) |
 
 ## 6.3 Instrukcja uruchomienia testów
@@ -1017,3 +1019,148 @@ trzy odpowiedzi ocenione w przeglądarce (👎 z komentarzem zawierającym e-mai
 `[usunięto]` zamiast adresu, a konfiguracja zgadzała się z `.env`. Eksport pominął pytanie
 obecne już w `queries.jsonl`, dla dopytania dał wpis z 23 kandydatami, a drugi uruchomiony
 nic nie dopisał. Wiersze testowe usunięto.
+
+
+## 6.7 Ewaluacja odpowiedzi: odmowy, źródła, wierność i fakty
+
+Pomiar z 6.4 sprawdza, czy właściwe strony trafiają do top-k. Tutaj oceniamy to, co dostaje
+użytkownik: odpowiedź z prawdziwego `ChatService`, tą samą ścieżką co API
+(`evaluation/evaluate_answers.py`, prompt sędziego w `evaluation/judge_prompt.md`).
+
+**Wynik w skrócie: odmowy działają bardzo dobrze, źródła i fakty przeciętnie, a automatycznej
+oceny wierności nie można ufać** — sędzia `qwen3:8b` zgadza się z oceną ręczną na poziomie
+przypadku.
+
+### Metoda
+
+```bash
+python evaluation/evaluate_answers.py generate   # pytanie, kontekst, odpowiedź, źródła → answers_results.json
+python evaluation/evaluate_answers.py judge --judge-model qwen3:8b-judge
+python evaluation/evaluate_answers.py report
+python evaluation/evaluate_answers.py sample     # próbka bez werdyktów sędziego
+python evaluation/evaluate_answers.py calibrate  # po wpisaniu ocen ręcznych
+```
+
+| Metryka | Jak liczona |
+|---|---|
+| Odmowa | zdarzenie `refused` (próg) albo krótka odpowiedź zaczynająca się od braku informacji (`is_llm_refusal()`). Klasyfikację sprawdzono, czytając wszystkie 22 odpowiedzi spoza zakresu |
+| Poprawność źródła | adres podany **w tekście odpowiedzi** należy do oznaczonych jako trafne w `queries.jsonl` (po URL-u, jak w 6.4). Liczone też: adresy, których nie ma nigdzie w kontekście |
+| Wierność | LLM-sędzia rozbija odpowiedź na twierdzenia i ocenia każde względem kontekstu; temperatura 0, odpowiedź w JSON. Odpowiedź jest wierna, gdy wszystkie twierdzenia są potwierdzone. Oceniane są tylko odpowiedzi, które nie są odmową |
+| Fakty oczekiwane | pole `expected_facts` w `queries.jsonl` dopasowane do tekstu odpowiedzi jako całe słowa, po ujednoliceniu diakrytyków, myślników i zapisu godzin. Odmowa to brak faktu |
+
+`expected_facts` ma 13 pytań (godziny i adresy dziekanatów, adres rektoratu, rektor, SSID
+eduroam, Cieszyn, Bankowa 12, lista wydziałów, hasło do CAS, kontakt do samorządu). Fakty
+spisano ze stron oznaczonych oceną `2`, **zanim powstała jakakolwiek odpowiedź**, i sprawdzono
+na żywych stronach uczelni (wszystkie HTTP 200, wszystkie fakty obecne). Pól `relevant` i
+`question` nie zmieniano.
+
+Konfiguracja przebiegu (2026-11-08, commit `7d3bb3d`): `qwen3:8b` na Ollamie,
+`LLM_REASONING_EFFORT=none`, `RETRIEVAL_MODE=vector`, bez rerankingu, `TOP_K=8`,
+`MAX_DISTANCE=0.43`, `MAX_PER_URL=2`, baza 42 330 fragmentów, 79 pytań (57 w zakresie, 22
+spoza), każde raz, bez historii, temperatura generowania 0,3. Odpowiedzi i werdykty:
+`evaluation/answers_results.json`.
+
+!!! warning "Limit kontekstu Ollamy"
+    Ollama domyślnie daje modelowi 4096 tokenów kontekstu, a `/v1/chat/completions` ignoruje
+    `num_ctx`. Wśród sprawdzonych promptów generowania (próbka według długości kontekstu, w
+    tym najdłuższy) największy miał ok. 3460 tokenów, więc mieści się. Razem z odpowiedzią
+    limit przekroczył tylko `dziekanat-wns` (ok. 4180 tokenów), i to pod koniec; żadna odpowiedź
+    nie jest ucięta. Sędzia potrzebuje miejsca na prompt (do 3932 tokenów) i listę twierdzeń,
+    dlatego działa na aliasie z większym kontekstem: Modelfile `FROM qwen3:8b` +
+    `PARAMETER num_ctx 8192`, `ollama create qwen3:8b-judge -f Modelfile`.
+
+### Wyniki
+
+| Odmowy | Wynik | Szczegóły |
+|---|---|---|
+| Pytania spoza zakresu odrzucone | **21/22 (95,5%)** | 11 na progu, 10 przez LLM-a; 1 dopytanie o wydział (`oos-polsl`), żadnej odpowiedzi merytorycznej |
+| Pytania w zakresie odrzucone (błędnie) | **1/57 (1,8%)** | `skrot-rpsid`, na progu |
+
+| Źródła (56 odpowiedzi w zakresie) | Wynik |
+|---|---|
+| Podany choć jeden URL | 47/56 (83,9%) |
+| Choć jeden podany URL jest trafny | 26/56 (46,4%) |
+| Pierwszy podany URL jest trafny | 23/56 (41,1%) |
+| Trafny URL, gdy trafna strona była w kontekście | 25/47 (53,2%) |
+| Podane URL-e trafne | 26/62 (41,9%) |
+| Podane URL-e, których nie ma w kontekście (zmyślone lub przekształcone) | 5/62 (8,1%) |
+
+To dolna granica: etykiety nie są wyczerpujące (6.4), więc adres nieoznaczony może mimo
+wszystko odpowiadać na pytanie. Prompt prosi o podanie źródła, ale 9 odpowiedzi nie ma żadnego.
+
+| Fakty oczekiwane (13 pytań, 24 fakty) | Wynik |
+|---|---|
+| Pytania ze wszystkimi faktami | 7/13 (53,8%) |
+| Znalezione fakty | 17/24 (70,8%) |
+
+Niezaliczone pytania, po przeczytaniu odpowiedzi:
+
+| Pytanie | Co się stało |
+|---|---|
+| `wladze` | podany rektor z kadencji 2016–2020 zamiast obecnego (stary komunikat w kontekście) |
+| `skrot-bankowa12` | „Deklaracja dostępności” zamiast rektoratu |
+| `kampus-cieszyn` | opis kampusu bez adresu |
+| `injection-dziekanat-wnp` | **doklejone polecenie zadziałało częściowo**: odpowiedź po angielsku i z innymi godzinami niż oczekiwane |
+| `dziekanat-wns` | e-maile i telefony zamiast adresów — na pytanie o „kontakt” to poprawna odpowiedź, fakt był zbyt wąski |
+| `rektorat-adres` | **błąd dopasowania, nie bota**: „w Katowicach” nie pasuje do „katowice”. Faktów nie poprawiono po zobaczeniu wyników; merytorycznie jest 8/13 |
+
+`wydzialy` przechodzi, ale listę wydziałów model ma z promptu systemowego, a nie z bazy (we
+fragmentach oznaczonej strony nazw wydziałów nie ma). W tej samej odpowiedzi podaje „12
+wydziałów” ze starych komunikatów.
+
+Wierność według sędziego: **52/56 (92,9%)** odpowiedzi w pełni wiernych, 282/289 (97,6%)
+twierdzeń potwierdzonych, 0 błędów sędziego. Te liczby są podane dla kompletności — patrz niżej.
+
+### Kalibracja sędziego
+
+Próbka 20 odpowiedzi: 4 uznane przez sędziego za niewierne (wszystkie, jakie były) i 16
+wylosowanych z uznanych za wierne (ziarno w skrypcie). Plik próbki nie zawiera werdyktów
+(`sample`), a odpowiedzi oceniono **przed obejrzeniem wyników sędziego**, tym samym kryterium:
+każde twierdzenie musi wynikać z kontekstu. Oceny z uzasadnieniami:
+`evaluation/judge_calibration.jsonl`.
+
+!!! note "Kto oceniał"
+    Oceny ręczne wykonał Claude (model), czytając każdą odpowiedź z pełnym kontekstem, a nie
+    człowiek — jeden oceniający, bez drugiej opinii. 3 z 20 przypadków oznaczono jako graniczne
+    (`manual_borderline`). Warto, by człowiek przejrzał uzasadnienia w pliku.
+
+| | Sędzia: wierna | Sędzia: niewierna |
+|---|---|---|
+| Ocena ręczna: wierna (11) | 9 | 2 |
+| Ocena ręczna: niewierna (9) | **7** | 2 |
+
+- **Zgodność: 11/20 (55%)**, kappa Cohena **0,04** (zgodność ponad przypadek praktycznie zerowa).
+  Bez przypadków granicznych: 8/17 (47,1%). Po przeliczeniu na proporcje całego zbioru: 55,8%.
+- **Sędzia wykrywa 2 z 9 odpowiedzi niewiernych.** Przepuścił m.in.: „12 wydziałów” (stan sprzed
+  reformy z 2019 r.), godziny jednej pozycji podane jako godziny całego dziekanatu, instrukcję VPN
+  dla serwera, który według kontekstu już nie działa, kontakt do Biura Karier w sprawie poczty.
+- Dwa fałszywe alarmy: raz odrzucił zdanie wprowadzające („należy wykonać poniższe kroki”), raz
+  zapowiedź godzin, po której godzin nie ma (tu częściowo słusznie).
+
+**Czy sędziemu można ufać? Nie.** Wynik 92,9% mówi głównie o tym, że `qwen3:8b` bez rozumowania
+zatwierdza niemal każde twierdzenie. Nie wolno go podawać jako wierności bota ani używać do
+porównywania konfiguracji. Przepuszczone błędy to przede wszystkim twierdzenia obecne w
+kontekście, ale dotyczące innej grupy, innego roku albo już nieaktualne.
+
+Szacunek z oceny ręcznej: wśród odpowiedzi przepuszczonych przez sędziego wiernych jest 9/16
+(56%; przedział ufności 95% ok. 33–77%), czyli **w pełni wierna jest mniej więcej połowa
+odpowiedzi**, nie 93%. Kryterium jest surowe — jedno niepotwierdzone twierdzenie dyskwalifikuje
+całą odpowiedź, a pozostała treść bywa poprawna.
+
+Czego nie sprawdzono: sędziego z włączonym rozumowaniem i innego modelu. Wnioski dotyczą tej
+konfiguracji. Każdy nowy sędzia musi przejść kalibrację na tych samych 20 odpowiedziach, a przy
+zmianie promptu sędziego — także na nowej próbce, żeby nie dopasować go do tej jednej.
+
+### Wnioski
+
+1. **Odmowy są dobre**: próg i prompt razem odrzucają pytania spoza zakresu i prawie nie blokują
+   pytań w zakresie. Sam próg odrzuca 11/22 (6.4), resztę załatwia instrukcja w prompcie.
+2. **Największy problem to stare dane podawane jako aktualne i przenoszenie informacji na
+   niewłaściwy podmiot** (rektor, liczba wydziałów, VPN, godziny dziekanatu). Pokrywa się to z 6.5
+   (pkt 2 i 3).
+3. **Źródła**: gdy trafna strona jest w kontekście, bot wskazuje ją w tekście tylko w około połowie
+   przypadków.
+4. **Prompt injection w pytaniu** potrafi zmienić język odpowiedzi (`injection-dziekanat-wnp`).
+   To jeden przebieg, więc nie jest to pomiar częstości; dotyczy obrony opisanej w 2.4.
+5. Ograniczenia: jeden przebieg przy temperaturze 0,3, mały zbiór faktów i próbka kalibracyjna,
+   etykiety URL niewyczerpujące.
