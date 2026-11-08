@@ -1229,12 +1229,20 @@ Progi: Hit@5 ≥ 0,96 i MRR ≥ 0,86, czyli zmierzone wartości minus około jed
 | `TOP_K=3` | 0,947 | 0,874 | ❌ kod 1 (Hit@5) |
 | `TOP_K=1` | 0,807 | 0,807 | ❌ kod 1 (obie metryki) |
 
+Na GitHubie (2026-11-08): workflow przeszedł na gałęzi z tą konfiguracją
+([przebieg](https://github.com/Erni0k/USBot/actions/runs/42499435528)), a na tymczasowej gałęzi z
+domyślnym `top_k = 1` w `usbot/config.py` zakończył się porażką na kroku ewaluacji
+([przebieg](https://github.com/Erni0k/USBot/actions/runs/42499737024)); zmianę wykrył też test
+jednostkowy domyślnych ustawień.
+
 Czułość jest ograniczona: Hit@5 jest blisko 1, więc małe pogorszenie kolejności wyników może
 przejść niezauważone. Dokładniej reaguje MRR.
 
 Czas embeddingu na CPU (lokalnie, `CUDA_VISIBLE_DEVICES=""`, 79 pytań): mediana ok. 55 ms na
-pytanie, łącznie z ładowaniem modelu 8–14 s. Runner GitHuba ma słabszy procesor; zmierzony czas
-pokazuje podsumowanie joba. Model (kilka GB) jest w `actions/cache`, więc pobiera się raz.
+pytanie, łącznie z ładowaniem modelu 8–14 s. Na runnerze GitHuba cały krok ewaluacji (z ładowaniem modelu)
+trwał 27 s, a cały job około 3 minut; dokładny czas pokazuje podsumowanie joba. Model jest w
+`actions/cache`. Cache zapisany na gałęzi nie jest widoczny na innych gałęziach, więc przed
+scaleniem z `main` model pobiera się raz na gałąź (ok. 30 s).
 
 ### Jak świadomie zaktualizować mini-indeks i progi
 
