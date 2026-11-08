@@ -381,6 +381,7 @@ nie trafiają do `os.environ` — zmienne bibliotek (np. `HF_HOME`) ustaw w śro
 | `MAX_PER_URL` | najwyżej tyle fragmentów z jednej strony w wynikach wyszukiwania; `0` = bez limitu | `2` |
 | `RETRIEVAL_MODE` | `vector` — samo wyszukiwanie wektorowe; `hybrid` — wektorowe + pełnotekstowe (`chunks.content_tsv`) połączone przez RRF; porównanie w `docs/testy.md` (6.4) | `vector` |
 | `RERANK` | `true` = 20 najlepszych fragmentów ocenia cross-encoder i zostaje `TOP_K`; wymaga GPU (na CPU ~6 s na pytanie) | `false` |
+| `RERANK_OLD_NEWS_FACTOR` | przy `RERANK=true` mnożnik wyniku starych aktualności; 1 = wyłączone | `1.0` |
 | `RERANK_MODEL` | model rerankera (cross-encoder) | `BAAI/bge-reranker-v2-m3` |
 | `MIN_RERANK_SCORE` | przy `RERANK=true` próg zamiast `MAX_DISTANCE`: min. wynik rerankera (0–1) fragmentu | `0.01` |
 | `BOILERPLATE_URLS` | fragment o tej samej treści na więcej stronach to boilerplate i nie trafia do bazy; `0` = wyłączone | `20` |
@@ -408,6 +409,7 @@ nie trafiają do `os.environ` — zmienne bibliotek (np. `HF_HOME`) ustaw w śro
 | `EMBED_BATCH` | ile stron embedować naraz | `16` |
 | `CRAWL_FRESH` | `true` = pełny re-crawl (czyści bazę) | `false` |
 | `CRAWL_REFETCH` | `true` = pobierz wszystko od nowa, embeduj tylko zmienione | `false` |
+| `CRAWL_ONLY` | adresy sekcji po przecinku: crawl tylko w nich | puste |
 
 ## Uwagi
 

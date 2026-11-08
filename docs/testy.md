@@ -1268,3 +1268,94 @@ Progi zmieniaj tylko po świadomej zmianie, z wyjaśnieniem w opisie commita:
    pytanie niższe.
 3. Nie obniżaj progu tylko po to, żeby CI przeszło. Nowe pytania w `queries.jsonl` zwykle wymagają
    przebudowy mini-indeksu i nowych progów, bo zmieniają mianownik.
+
+## 6.9 Poprawa odpowiedzi: test 80 pytań z podziałem na strojenie i test
+
+2026-11-08. Celem było poprawienie samych odpowiedzi, po wnioskach z 6.5 i 6.7.
+
+**Wynik w skrócie: zniknęły zmyślone adresy, ale poprawność odpowiedzi na części testowej
+się nie poprawiła.** Pełne ustawienie z rerankingiem dało więcej odpowiedzi błędnych, więc
+reranking zostaje wyłączony. Przy `qwen3:8b` kolejne reguły promptu i ustawienia modelu
+nie dały poprawy większej niż rozrzut między przebiegami.
+
+### Metoda
+
+`evaluation/golden_80.jsonl`: 80 pytań z 6.5 z odpowiedziami wzorcowymi, podzielonych po
+połowie w każdej kategorii (ziarno 42) na `tuning` (strojenie) i `test` (tylko wynik końcowy).
+`evaluation/evaluate_golden.py` zadaje pytania przez `ChatService` kilka razy i porównuje
+warianty. Zaliczenie automatyczne to dopasowanie faktów spisanych **przed** pierwszym pomiarem
+(`expected_facts`, `forbidden_facts`, `expect`) — służy do porównań, nie mierzy poprawności.
+
+Odpowiedź nie musi być słowo w słowo taka jak wzorzec, dlatego wynik końcowy to ocena **sensu**:
+pary odpowiedzi „przed” i „po” z części testowej (1. przebieg), wymieszane losowo, bez adresów i
+numerów, ocenione przed odkryciem, która jest która.
+
+!!! note "Kto oceniał i ograniczenia"
+    Ocenił Claude (model), jeden oceniający, bez drugiej opinii. Ślepota jest niepełna: stare
+    odpowiedzi częściej zawierają „Źródło:” w tekście. Wzorce nie były osobno weryfikowane na
+    stronach uczelni. Bez rerankingu część testowa została użyta drugi raz, więc ten wynik jest
+    nieco dopasowany. 40 pytań to mała próba: różnica 1–2 pytań nic nie znaczy.
+
+### Strojenie (40 pytań, po 2 przebiegi, automatycznie)
+
+| Wariant | Zaliczone | Niesłuszne odmowy |
+|---|---|---|
+| Stan wyjściowy (3 przebiegi) | 16,3 (16–17) | 4,7 |
+| Numerowane źródła | 16,5 (16–17) | 4,5 |
+| + nowe serwisy w bazie (crawl sekcji) | 15,0 (14–16) | 4,5 |
+| + filtr angielskich stron | 17,5 (17–18) | 4,0 |
+| + reranking | 17,5 (17–18) | 3,0 |
+| + reranking, stare komunikaty × 0,5 | 19,0 (18–20) | 3,0 |
+| … + reguła E: konkretne kroki i dane | 17,5 (17–18) | 3,0 |
+| … + reguła A: właściwy podmiot i okres | 18,5 (17–20) | 4,0 |
+| … + reguła B: zasady dosłownie | 18,0 | 3,0 |
+| … + reguła C: sprzeczności | 19,0 (18–20) | 4,0 |
+| … + temperatura 0,1 | 19,0 (18–20) | 3,0 |
+| … + kontekst 8192 tokeny | 18,5 (17–20) | 3,0 |
+| … + rozumowanie modelu (1 przebieg) | 18,0 | 5,0 |
+
+Rozrzut między przebiegami to 1–2 pytania. Reguły E, A, B i C nie weszły do promptu, tak samo
+temperatura, większy kontekst i rozumowanie (ok. 31 s na odpowiedź). Największa była zmiana z
+filtrem języka i rerankingiem, ale nie powtórzyła się na części testowej.
+
+### Część testowa (40 pytań)
+
+| | Przed | Z rerankingiem | **Bez rerankingu (domyślnie)** |
+|---|---|---|---|
+| Zaliczone automatycznie (średnia z 3) | 19,7 | 19,0 | 19,0 |
+| Ocena sensu: poprawne (lub słuszna odmowa) | 17 | 16 | 16 |
+| Ocena sensu: częściowe | 9 | 7 | 7 |
+| Ocena sensu: **błędne** | 8 | 12 | 9 |
+| Ocena sensu: niesłuszne odmowy | 6 | 5 | 8 |
+
+Na zbiorze z 6.7 (79 pytań, jeden przebieg):
+
+| | Przed (6.7) | Z rerankingiem | Bez rerankingu |
+|---|---|---|---|
+| Spoza zakresu odrzucone | 21/22 | 19/22 | 21/22 |
+| W zakresie odrzucone błędnie | 1/57 | 0/57 | 1/57 |
+| Trafny URL, gdy strona jest w kontekście | 25/47 | 32/50 | 29/47 |
+| Podane URL-e spoza kontekstu | 5/62 | 0/102 | 0/102 |
+| Fakty oczekiwane (13 pytań) | 17/24 | 23/24 | 16/24 |
+
+Prompt injection (`evaluation/injection.py`, po 5 prób) bez rerankingu: polecenie na stronie 0/5,
+zakamuflowane 0/5, wiersz po angielsku 1/5, ujawnienie instrukcji 5/5, jak w 2.4.
+
+### Wnioski
+
+1. **Numerowane źródła zostają.** Model cytuje `[2]`, a adresy dokleja kod
+   (`usbot/core/citations.py`). Numer spoza kontekstu jest usuwany, bez spadku jakości.
+2. **Nowe serwisy** (`rekrutacja`, `erasmus`, `cwfis`, `ciniba`; `CRAWL_ONLY`) podniosły pokrycie
+   stron wzorcowych z 15 do 29 z 38, ale nie liczbę poprawnych odpowiedzi. Strony rekrutacyjne
+   bywają brane do pytań studentów: „Nie mam oceny” — wgrywanie dyplomu, „Nie widzę przedmiotu” —
+   punkty w rankingu.
+3. **Filtr angielskich stron** (`for_question_language()`) jest potrzebny po dodaniu serwisów.
+4. **Reranking zostaje wyłączony**, bo pogarsza odmowy spoza zakresu (19/22) i daje 3 błędne
+   odpowiedzi więcej, choć wyraźnie poprawia fakty oczekiwane (23/24). Do sprawdzenia: wyższy
+   `MIN_RERANK_SCORE`, wtedy może się opłacić. `RERANK_OLD_NEWS_FACTOR` jest dostępny.
+5. **Prompt nie jest już dźwignią** dla tego modelu. Pozostałe błędy to złe fragmenty i błędne
+   odczytanie zasad.
+
+Czego tym nie poprawiono: pytania potoczne i o organizację zajęć (0/12 automatycznie; częste
+odmowy na progu), zasady egzaminów i poprawek, stypendium rektora podawane jako pewne (900 zł),
+zmiana grupy (zasady lektoratu przenoszone na laboratoria).

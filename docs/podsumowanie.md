@@ -175,10 +175,11 @@
   trafia w dziekanat WNŚiT. Rozwijanie skrótów pomaga częściowo: w trybie vector strona
   dziekanatu WNŚiT wchodzi do top-4 po pytaniu z pełną nazwą WH, ale po „Godziny
   dziekanatu WH” zostają strony WNŚiT niebędące dziekanatem.
-- **Pokrycie bazy** — test 80 pytań ([Testy](testy.md), 6.5): z 44 stron wzorcowych w bazie
-  jest 19; brakuje m.in. `rekrutacja.us.edu.pl`, CINiBA, Erasmus, CWFiS i najnowszych
-  komunikatów. To główna przyczyna odmów na pytania potoczne — wyższy próg i przeformułowanie
-  pytania przez LLM nie pomagają.
+- **Jakość odpowiedzi** — test 80 pytań ([Testy](testy.md), 6.9): numerowane źródła usunęły
+  zmyślone adresy, a dodanie `rekrutacja.us.edu.pl`, CINiBA, Erasmus i CWFiS podniosło pokrycie
+  stron wzorcowych do 29 z 38, ale poprawność odpowiedzi na części testowej się nie zmieniła.
+  Do sprawdzenia: wyższy próg rerankera, lepszy dobór fragmentów dla pytań potocznych i
+  większy model.
 - **Pytania o egzaminy i oceny** — `qwen3:8b` myli zasady (poprawki, egzamin komisyjny,
   odwołania); do sprawdzenia reranking albo większy model.
 - **Angielskie wersje portalu** (`/student/en/`) — pomijanie lub obniżanie w wynikach
