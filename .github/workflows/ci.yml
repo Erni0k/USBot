@@ -1,0 +1,71 @@
+name: CI
+
+# Opis: docs/testy.md (6.8). Bez LLM-a — ewaluacja odpowiedzi jest ręczna (6.7).
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-deps
+      - run: ruff check .
+      - run: pytest tests/unit -q
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-deps
+      # testcontainers sam uruchamia pgvector/pgvector:pg16
+      - run: pytest tests/integration -q
+
+  retrieval-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: chatbot
+          POSTGRES_PASSWORD: changeme
+          POSTGRES_DB: chatbot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U chatbot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    # Celowo bez TOP_K i innych ustawień: bramka sprawdza domyślną konfigurację z usbot/config.py
+    env:
+      DATABASE_URL: postgresql://chatbot:changeme@localhost:5432/chatbot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-deps
+      - id: model-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-bge-m3-v1
+      - name: Pobranie modelu embeddingów
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: python -m usbot.download_models
+      # Osobno od kroku bramki: spadek wyniku nie może zablokować zapisania modelu
+      - uses: actions/cache/save@v4
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/huggingface
+          key: hf-bge-m3-v1
+      - run: python evaluation/build_fixture.py load
+      - name: Ewaluacja na mini-indeksie
+        run: python evaluation/evaluate.py --check evaluation/thresholds.json

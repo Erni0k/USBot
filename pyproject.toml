@@ -1,5 +1,13 @@
 # Konfiguracja narzędzi. Zależności: requirements.txt (aplikacja) i requirements-dev.txt (testy).
 
+[tool.ruff]
+target-version = "py312"  # jak w Dockerfile i CI
+line-length = 120
+
+[tool.ruff.lint]
+# Błędy, nie styl: nowsze wersje ruffa domyślnie włączają też reguły stylu
+select = ["E4", "E7", "E9", "F"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

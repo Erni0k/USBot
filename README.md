@@ -43,6 +43,7 @@ us-chatbot/
 │   ├── evaluate.py     # metryki retrievalu: Hit/Recall/Precision/nDCG@k, MRR, dobór progu (odległość / reranker)
 │   ├── latency.py      # czas do pierwszego tokenu i całkowity przez API
 │   ├── injection.py    # próby prompt injection na LLM-ie (bieżący prompt)
+│   ├── build_fixture.py    # mini-indeks do CI: oznaczone strony + dystraktory (docs/testy.md, 6.8)
 │   ├── evaluate_answers.py # odmowy, poprawność źródeł, wierność (LLM-sędzia), fakty oczekiwane (docs/testy.md, 6.7)
 │   ├── feedback_export.py  # oceny 👎 → plik roboczy do ręcznego oznaczenia (docs/testy.md, 6.6)
 │   ├── feedback_report.py  # odsetek 👎 w czasie i najczęstsze tematy pytań z 👎

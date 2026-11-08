@@ -20,12 +20,16 @@ Dobór MAX_DISTANCE: python evaluation/evaluate.py --threshold-sweep
 Tryb wyszukiwania:  python evaluation/evaluate.py --mode hybrid   (domyślnie RETRIEVAL_MODE)
 Reranking:          python evaluation/evaluate.py --rerank        (domyślnie RERANK; --no-rerank)
                     z --threshold-sweep: próg na odległości i na wyniku rerankera
+Bramka CI:          python evaluation/evaluate.py --check evaluation/thresholds.json
+                    wyniki ograniczone do TOP_K, kod 1 przy spadku poniżej progów
 """
 import argparse
 import json
 import math
+import os
 import statistics
 import sys
+import time
 from pathlib import Path
 
 # UTF-8 na Windows (cp1252 nie obsługuje polskich znaków)
@@ -154,6 +158,32 @@ def threshold_sweep(answerable: list[dict], out_of_scope: list[dict], queries: l
               f"{lost:>28} {lost_total:>27} {hit1 / n:>15.3f} {hitk / n:>15.3f}")
 
 
+def gate_metrics(answerable: list[dict], k: int = 5) -> dict[str, float]:
+    """Metryki bramki CI, liczone jak w tabeli wyników."""
+    return {f"hit@{k}": statistics.mean(r["scores"][k]["hit"] for r in answerable),
+            "mrr": statistics.mean(r["rr"] for r in answerable)}
+
+
+def check_thresholds(metrics: dict[str, float], thresholds: dict[str, float]) -> list[dict]:
+    """Wiersz na metrykę z progiem. Metryka bez wyniku to porażka, nie cichy przepust."""
+    return [{"metric": name, "value": metrics.get(name), "threshold": minimum,
+             "ok": name in metrics and metrics[name] >= minimum}
+            for name, minimum in thresholds.items()]
+
+
+def render_check(rows: list[dict], *, questions: int, top_k: int, timing: str) -> str:
+    """Wynik bramki w Markdownie: wyjście programu i podsumowanie joba GitHub Actions."""
+    verdict = "✅ progi spełnione" if all(r["ok"] for r in rows) else "❌ spadek poniżej progu"
+    lines = [f"### Ewaluacja retrievalu na mini-indeksie: {verdict}", "",
+             "| Metryka | Wynik | Próg | |", "|---|---|---|---|"]
+    for r in rows:
+        value = "brak" if r["value"] is None else f"{r['value']:.3f}"
+        lines.append(f"| {r['metric']} | {value} | {r['threshold']:.3f} | {'✅' if r['ok'] else '❌'} |")
+    lines += ["", f"Pytania w zakresie: {questions}, `TOP_K` = {top_k}. {timing}", "",
+              "Mini-indeks jest mniejszy od pełnej bazy, więc wyniki są wyższe niż na produkcji (docs/testy.md, 6.8)."]
+    return "\n".join(lines)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--file", type=Path, default=QUERIES)
@@ -167,6 +197,8 @@ def main() -> None:
                     help=f"tryb wyszukiwania (domyślnie RETRIEVAL_MODE = {SETTINGS.retrieval_mode})")
     ap.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=SETTINGS.rerank,
                     help=f"reranking cross-encoderem (domyślnie RERANK = {SETTINGS.rerank})")
+    ap.add_argument("--check", type=Path, metavar="PROGI.json",
+                    help="bramka CI: wyniki ograniczone do TOP_K, kod 1 przy spadku poniżej progów")
     args = ap.parse_args()
 
     queries = load_queries(args.file)
@@ -176,14 +208,21 @@ def main() -> None:
     max_k = ks[-1]
     # Sweep patrzy na tyle fragmentów, ile dostaje LLM — może to być więcej niż max_k
     fetch_k = max(max_k, TOP_K) if args.threshold_sweep else max_k
+    if args.check:
+        # Bramka ocenia to, co dostaje LLM: bez tego TOP_K nie wpływałby na Hit@5 ani MRR
+        fetch_k = min(max_k, TOP_K)
+        print(f"Bramka: wyniki ograniczone do TOP_K = {TOP_K}")
 
     # Te same adaptery co w cli.py, ale bez progu odcięcia: Retriever.search() zwraca
     # wyniki przed progiem, a skutki progu liczy --threshold-sweep.
     retriever = build_retriever(SETTINGS.model_copy(
         update={"retrieval_mode": args.mode, "rerank": args.rerank}))
     per_query = []
+    seconds: list[float] = []
     for q in queries:
+        start = time.perf_counter()
         chunks = retriever.search([q["question"]], fetch_k)
+        seconds.append(time.perf_counter() - start)
         ranked = [norm_url(c.url) for c in chunks]
         row = {
             "id": q["id"],
@@ -266,6 +305,20 @@ def main() -> None:
     if args.out:
         args.out.write_text(json.dumps(per_query, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"\nZapisano: {args.out}")
+
+    if args.check:
+        # Pierwsze pytanie zawiera ładowanie modelu, więc mediana liczona jest bez niego
+        timing = (f"Czas: pierwsze pytanie z ładowaniem modelu {seconds[0]:.1f} s, "
+                  f"mediana kolejnych {statistics.median(seconds[1:]) * 1000:.0f} ms, razem {sum(seconds):.1f} s.")
+        thresholds = json.loads(args.check.read_text(encoding="utf-8"))["min"]
+        rows = check_thresholds(gate_metrics(answerable), thresholds)
+        report = render_check(rows, questions=len(answerable), top_k=TOP_K, timing=timing)
+        print("\n" + report)
+        if os.environ.get("GITHUB_STEP_SUMMARY"):
+            with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+                f.write(report + "\n")
+        if not all(r["ok"] for r in rows):
+            sys.exit(1)
 
 
 if __name__ == "__main__":

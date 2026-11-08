@@ -31,3 +31,6 @@ logs/
 backups/
 # plik roboczy z treściami od użytkowników (evaluation/feedback_export.py)
 evaluation/feedback_do_oznaczenia.jsonl
+# odpowiedzi bota z pełnymi fragmentami stron — nazwiska, e-maile i telefony pracowników
+evaluation/answers_results.json
+evaluation/judge_calibration.jsonl

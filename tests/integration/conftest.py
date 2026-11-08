@@ -6,6 +6,7 @@ oś przestrzeni 1024-wymiarowej, a wektor fragmentu to znormalizowana kombinacja
 """
 import hashlib
 import math
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -101,6 +102,8 @@ def _docker_available() -> bool:
 def database_url() -> str:
     """Adres bazy w świeżym kontenerze pgvector/pgvector:pg16 ze schematem z infra/init.sql."""
     if not _docker_available():
+        if os.environ.get("CI"):  # w CI pominięcie dałoby zielony job bez żadnego testu
+            pytest.fail("Docker niedostępny w CI")
         pytest.skip("Docker niedostępny — testy integracyjne pominięte")
     try:  # testcontainers ≥ 4.14 przeniosło moduł do .community
         from testcontainers.community.postgres import PostgresContainer

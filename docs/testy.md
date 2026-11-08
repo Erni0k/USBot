@@ -72,6 +72,7 @@ Status: ✅ — zaimplementowany (plik w kolumnie „Test”), ⏳ — planowany
 | T47 | Jedn. + integr. | `feedback_export.py`, `feedback_report.py`, `load_queries()` | Powtórzone pytania, dopytania, drugi eksport po oznaczeniu, zepsuty plik; tematy pytań; nieoznaczony wpis w zbiorze | Format `queries.jsonl`, dopisywane tylko nowe, oznaczenia nietknięte, zepsuty plik nie jest nadpisywany; kandydaci z obu wyszukiwań; `evaluate.py` pomija nieoznaczone | ✅ `unit/test_feedback.py`, `integration/test_feedback.py` |
 | T48 | Jednostkowy | `evaluate_answers.py` | Odmowy, adresy w odpowiedzi, dopasowanie faktów (formaty godzin, warianty odmiany, całe słowa), parsowanie werdyktu, próbka bez werdyktów, zgodność i kappa | Poprawne klasyfikacje; odmowa nie zalicza faktu; błąd sędziego nie liczy się jako wierna odpowiedź; oceny ręczne nie są nadpisywane | ✅ `unit/test_evaluate_answers.py` |
 | T49 | Manualny | odpowiedzi bota i LLM-sędzia | 79 pytań przez `ChatService`, sędzia `qwen3:8b`, 20 odpowiedzi ocenionych bez znajomości werdyktów | Wyniki i ocena wiarygodności sędziego w 6.7 | ✅ (2026-11-08) |
+| T50 | Jednostkowy | `evaluate.py --check`, `build_fixture.py` | Wynik równy progowi i poniżej, brak metryki; dobór stron niezależny od kolejności, apostrofy w SQL, powtarzalny plik, brak e-maili w mini-indeksie | Metryka bez wyniku to porażka; ten sam seed daje te same strony i identyczny plik; w pliku nie ma treści stron | ✅ `unit/test_ci_gate.py` |
 | T35 | Manualny | API + Ollama | `curl -N` na `/api/chat`, przerwanie curla w trakcie, `/api/health`; `evaluation/latency.py` | Tokeny na bieżąco, źródła przed tokenami; w logu serwera „przerwano odpowiedź”; czasy w docs/api.md (3.2) | ✅ (2026-11-04) |
 
 ## 6.3 Instrukcja uruchomienia testów
@@ -1057,8 +1058,9 @@ na żywych stronach uczelni (wszystkie HTTP 200, wszystkie fakty obecne). Pól `
 Konfiguracja przebiegu (2026-11-08, commit `7d3bb3d`): `qwen3:8b` na Ollamie,
 `LLM_REASONING_EFFORT=none`, `RETRIEVAL_MODE=vector`, bez rerankingu, `TOP_K=8`,
 `MAX_DISTANCE=0.43`, `MAX_PER_URL=2`, baza 42 330 fragmentów, 79 pytań (57 w zakresie, 22
-spoza), każde raz, bez historii, temperatura generowania 0,3. Odpowiedzi i werdykty:
-`evaluation/answers_results.json`.
+spoza), każde raz, bez historii, temperatura generowania 0,3. Odpowiedzi i werdykty są w
+`evaluation/answers_results.json` — tylko lokalnie, w `.gitignore`, bo fragmenty stron zawierają
+nazwiska, e-maile i telefony pracowników, a repozytorium jest publiczne.
 
 !!! warning "Limit kontekstu Ollamy"
     Ollama domyślnie daje modelowi 4096 tokenów kontekstu, a `/v1/chat/completions` ignoruje
@@ -1116,8 +1118,8 @@ twierdzeń potwierdzonych, 0 błędów sędziego. Te liczby są podane dla kompl
 Próbka 20 odpowiedzi: 4 uznane przez sędziego za niewierne (wszystkie, jakie były) i 16
 wylosowanych z uznanych za wierne (ziarno w skrypcie). Plik próbki nie zawiera werdyktów
 (`sample`), a odpowiedzi oceniono **przed obejrzeniem wyników sędziego**, tym samym kryterium:
-każde twierdzenie musi wynikać z kontekstu. Oceny z uzasadnieniami:
-`evaluation/judge_calibration.jsonl`.
+każde twierdzenie musi wynikać z kontekstu. Oceny z uzasadnieniami są w
+`evaluation/judge_calibration.jsonl` (lokalnie, w `.gitignore`, z tego samego powodu).
 
 !!! note "Kto oceniał"
     Oceny ręczne wykonał Claude (model), czytając każdą odpowiedź z pełnym kontekstem, a nie
@@ -1164,3 +1166,97 @@ zmianie promptu sędziego — także na nowej próbce, żeby nie dopasować go d
    To jeden przebieg, więc nie jest to pomiar częstości; dotyczy obrony opisanej w 2.4.
 5. Ograniczenia: jeden przebieg przy temperaturze 0,3, mały zbiór faktów i próbka kalibracyjna,
    etykiety URL niewyczerpujące.
+
+## 6.8 Ciągła integracja (CI)
+
+Workflow `.github/workflows/ci.yml` uruchamia się przy każdym pushu i pull requeście. Trzy
+joby działają niezależnie, na Pythonie 3.12 i `torch` na CPU. `docs.yml` (publikacja
+dokumentacji) to osobny workflow.
+
+| Job | Co robi |
+|---|---|
+| `lint-and-unit` | `ruff check .` (reguły `E4`, `E7`, `E9`, `F` — błędy, nie styl) i `pytest tests/unit` |
+| `integration` | `pytest tests/integration` z testcontainers. W CI brak Dockera to błąd, a nie pominięcie testów |
+| `retrieval-gate` | wczytuje mini-indeks do kontenera `pgvector/pgvector:pg16`, liczy embeddingi pytań na CPU i uruchamia `evaluate.py --check`. Wynik trafia do podsumowania joba. Spadek poniżej progu kończy job błędem |
+
+**Bez LLM-a.** CI nie ma GPU ani serwera modelu, więc mierzy tylko retrieval. Ewaluacja
+odpowiedzi (6.7) zostaje lokalna i ręczna: potrzebuje modelu, a jej automatyczny sędzia i tak
+okazał się niewiarygodny.
+
+### Mini-indeks
+
+`evaluation/fixture/mini_index.sql.gz` (13,0 MB) zawiera 2581 fragmentów: wszystkie oznaczone
+strony obecne w bazie (102 ze 103 — brakuje martwego adresu `…/dziekanat-2/`) i 500 losowych
+stron jako dystraktory (`SEED` w skrypcie). Pełna baza ma 42 330 fragmentów z 12 055 stron.
+
+!!! warning "Wynik na mini-indeksie jest wyższy niż na pełnej bazie"
+    Mini-indeks ma ok. 6% fragmentów, a oznaczone strony stanowią w nim dużą część danych, więc
+    mają znacznie mniej konkurencji. **Te liczby nie opisują jakości bota.** Służą tylko do
+    wykrywania regresji między commitami. O jakości mówią pomiary na pełnej bazie (6.4).
+
+| Pomiar 2026-11-08 (ta sama bramka, `TOP_K=8`) | Hit@1 | Hit@5 | MRR |
+|---|---|---|---|
+| Mini-indeks | 0,807 | **0,982** | **0,886** |
+| Pełna baza | 0,579 | **0,842** | **0,684** |
+
+Decyzje:
+
+- **Plik SQL w gzipie, w zwykłym gicie, bez Git LFS.** 13 MB mieści się w limitach GitHuba, a
+  LFS ma limity transferu, które CI szybko by zużywał, i wymaga dodatkowej konfiguracji. Parquet
+  dodałby zależność (`pyarrow`) bez wyraźnego zysku, bo embeddingi i tak słabo się kompresują.
+  Każda przebudowa dodaje do historii około 13 MB, więc robimy ją tylko świadomie.
+- **Bez treści i tytułów stron.** Repozytorium jest publiczne, a strony uczelni zawierają nazwiska,
+  e-maile i telefony pracowników. Wyszukiwanie wektorowe potrzebuje tylko adresu, typu, daty,
+  hashy i embeddingu, więc wynik w tym trybie jest taki sam. Skutek: `RETRIEVAL_MODE=hybrid` nie
+  ma sensu na mini-indeksie, bo nie ma tekstu do wyszukiwania.
+- **Bez indeksu HNSW.** HNSW jest przybliżony i buduje się losowo, więc wynik mógłby się zmieniać
+  między uruchomieniami. Pełny skan kilku tysięcy fragmentów jest powtarzalny (dwa przebiegi dały
+  identyczne wyniki), a retrieval w CI testuje ranking, nie indeks.
+
+### Bramka i progi
+
+`evaluate.py --check evaluation/thresholds.json` ocenia wyłącznie to, co dostaje LLM: wyniki są
+ograniczone do `TOP_K`. Bez tego ograniczenia `TOP_K` nie wpływałby na Hit@5 ani MRR. Workflow
+nie ustawia `TOP_K` ani innych opcji, więc bramka sprawdza domyślną konfigurację z
+`usbot/config.py`.
+
+Progi: Hit@5 ≥ 0,96 i MRR ≥ 0,86, czyli zmierzone wartości minus około jedno pytanie zapasu
+(1/57 ≈ 0,018). Sprawdzono lokalnie:
+
+| Konfiguracja | Hit@5 | MRR | Wynik bramki |
+|---|---|---|---|
+| domyślna (`TOP_K=8`) | 0,982 | 0,886 | ✅ kod 0 |
+| `TOP_K=3` | 0,947 | 0,874 | ❌ kod 1 (Hit@5) |
+| `TOP_K=1` | 0,807 | 0,807 | ❌ kod 1 (obie metryki) |
+
+Czułość jest ograniczona: Hit@5 jest blisko 1, więc małe pogorszenie kolejności wyników może
+przejść niezauważone. Dokładniej reaguje MRR.
+
+Czas embeddingu na CPU (lokalnie, `CUDA_VISIBLE_DEVICES=""`, 79 pytań): mediana ok. 55 ms na
+pytanie, łącznie z ładowaniem modelu 8–14 s. Runner GitHuba ma słabszy procesor; zmierzony czas
+pokazuje podsumowanie joba. Model (kilka GB) jest w `actions/cache`, więc pobiera się raz.
+
+### Jak świadomie zaktualizować mini-indeks i progi
+
+Mini-indeks przebuduj, gdy zmienia się chunking, model embeddingów albo przybyły oznaczone strony:
+
+```bash
+docker compose up -d                                  # pełna baza deweloperska
+python evaluation/build_fixture.py build              # zapisuje evaluation/fixture/mini_index.sql.gz
+```
+
+Pomiar na czystej bazie (pusta baza na porcie innym niż deweloperska, adres w `DATABASE_URL`):
+
+```bash
+python evaluation/build_fixture.py load
+python evaluation/evaluate.py --check evaluation/thresholds.json
+```
+
+Progi zmieniaj tylko po świadomej zmianie, z wyjaśnieniem w opisie commita:
+
+1. Sprawdź, czy spadek jest zamierzony i zmierz **pełną bazę** (6.4). Sam mini-indeks nie
+   wystarczy do oceny zmiany.
+2. W `evaluation/thresholds.json` wpisz w `measured` nowe wyniki, a w `min` wartości o około jedno
+   pytanie niższe.
+3. Nie obniżaj progu tylko po to, żeby CI przeszło. Nowe pytania w `queries.jsonl` zwykle wymagają
+   przebudowy mini-indeksu i nowych progów, bo zmieniają mianownik.
