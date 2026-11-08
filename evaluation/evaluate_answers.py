@@ -104,20 +104,21 @@ def cited_urls(answer: str) -> list[str]:
     return list(dict.fromkeys(norm_url(u.rstrip(".,;:!?*_")) for u in _URL.findall(answer)))
 
 
-def context_urls(context: str) -> set[str]:
-    return {norm_url(u) for u in re.findall(r"\[Źródło: (\S+?)(?:\]| \|)", context)}
+def context_urls(item: dict) -> set[str]:
+    """Strony, których fragmenty dostał LLM (adresów w samym kontekście nie ma)."""
+    return {norm_url(s["url"]) for s in item["sources"]}
 
 
 def source_score(item: dict) -> dict:
     """Czy adres podany w odpowiedzi należy do oznaczonych jako trafne (po URL-u)."""
     relevant = {norm_url(u) for u in item["relevant"]}
     cited = cited_urls(item["answer"])
-    in_context = context_urls(item["context"])
+    in_context = context_urls(item)
     good = [u for u in cited if u in relevant]
     return {"cited": cited, "n_cited": len(cited), "any_relevant": bool(good),
             "first_relevant": bool(cited) and cited[0] in relevant, "n_relevant": len(good),
-            # Szukane w całym kontekście: adres bywa w treści fragmentu, nie tylko w nagłówku
-            "not_in_context": [u for u in cited if u not in item["context"].lower()],
+            # Szukane też w treści kontekstu: adres bywa w tekście fragmentu
+            "not_in_context": [u for u in cited if u not in in_context and u not in item["context"].lower()],
             "relevant_in_context": bool(relevant & in_context)}
 
 

@@ -27,7 +27,7 @@ EXIT_COMMANDS = ("wyjdź", "wyjdz", "exit", "quit", "q")
 def print_reply(events: Iterable[Event]) -> str:
     """Wypisuje odpowiedź ze strumienia zdarzeń; zwraca tekst do historii (`done.answer`).
 
-    Źródła (`sources`) nie są wypisywane osobno — LLM podaje URL-e w treści odpowiedzi.
+    Źródła (`sources`) nie są wypisywane osobno — lista cytowanych stron kończy odpowiedź.
     „Bot: ” pojawia się przed wywołaniem LLM-a (zdarzenie `sources`), tak jak wcześniej.
     """
     answer = ""

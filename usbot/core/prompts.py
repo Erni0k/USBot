@@ -3,6 +3,7 @@ import re
 from collections.abc import Sequence
 from datetime import date
 
+from usbot.core.citations import source_numbers
 from usbot.core.models import Chunk, Message
 
 NO_INFO = "Nie mam tej informacji – sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
@@ -11,7 +12,8 @@ SYSTEM_PROMPT = """Jesteś asystentem Uniwersytetu Śląskiego w Katowicach.
 Odpowiadaj WYŁĄCZNIE na podstawie poniższego kontekstu.
 Jeśli w kontekście nie ma odpowiedzi, powiedz:
 "Nie mam tej informacji – sprawdź na us.edu.pl lub skontaktuj się z dziekanatem."
-Podawaj źródłowy adres URL, z którego pochodzi informacja.
+Po każdej informacji podaj w nawiasie kwadratowym numer fragmentu, z którego pochodzi, np. [2].
+Nie wpisuj adresów URL — lista źródeł zostanie dołączona automatycznie.
 Nie zmyślaj dat, nazwisk, godzin ani kwot. Odpowiadaj po polsku, zwięźle i uprzejmie.
 
 DOPYTYWANIE O DZIEKANAT:
@@ -27,6 +29,7 @@ wymień dostępne wydziały:
 - Wydział Prawa i Administracji (WPiA)
 - Wydział Sztuki i Nauk o Edukacji (WSNE)
 - Wydział Teologiczny (WTL)
+- Szkoła Filmowa im. Krzysztofa Kieślowskiego (SF)
 Dopiero gdy użytkownik wskaże wydział, podaj informacje o jego dziekanacie.
 
 AKTUALNOŚĆ INFORMACJI:
@@ -71,24 +74,26 @@ def _neutralize(text: str) -> str:
 _DATED_TYPES = {"news": "komunikat", "event": "wydarzenie"}
 
 
-def _header(c: Chunk) -> str:
+def _header(c: Chunk, number: int) -> str:
     label = _DATED_TYPES.get(c.page_type or "")
     dated = f" | {label} z {c.published_at.date().isoformat()}" if label and c.published_at else ""
-    return f"[Źródło: {_neutralize(c.url)}{dated}]"
+    return f"[Źródło {number}{dated}]"
 
 
 def build_context(chunks: Sequence[Chunk]) -> str:
-    """Kontekst dla LLM-a: fragmenty z nagłówkiem `[Źródło: <url>]`, w kolejności wyników.
+    """Kontekst dla LLM-a: fragmenty z nagłówkiem `[Źródło <numer>]`, w kolejności wyników.
 
-    Przy komunikatach i wydarzeniach nagłówek ma datę publikacji
-    (`[Źródło: <url> | komunikat z 2024-10-22]`), żeby model nie podawał starych kwot i
-    terminów jako bieżących. Kontekst trafia do SYSTEM_PROMPT między znaczniki <context> i
+    Fragmenty jednej strony mają ten sam numer. Adresów w kontekście nie ma — model cytuje
+    numery, a adresy dokleja ChatService (usbot/core/citations.py). Przy komunikatach i
+    wydarzeniach nagłówek ma datę publikacji (`[Źródło 2 | komunikat z 2024-10-22]`), żeby
+    model nie podawał starych kwot i terminów jako bieżących. Kontekst trafia do SYSTEM_PROMPT między znaczniki <context> i
     </context>; znaczniki w treści fragmentów są neutralizowane, żeby strona nie mogła
     wyjść poza kontekst.
     """
     if not chunks:
         return "(brak pasujących informacji w bazie — uruchom najpierw ingestion/ingest.py)"
-    return "\n\n".join(f"{_header(c)}\n{_neutralize(c.content)}" for c in chunks)
+    numbers = source_numbers(chunks)
+    return "\n\n".join(f"{_header(c, numbers[c.url])}\n{_neutralize(c.content)}" for c in chunks)
 
 
 def academic_year(today: date) -> str:

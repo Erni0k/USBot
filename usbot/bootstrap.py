@@ -32,7 +32,9 @@ def build_retriever_parts(settings: Settings, embedder: Embedder | None = None, 
         return pg, pg, None
     from usbot.adapters.reranker import CrossEncoderReranker
     reranker = CrossEncoderReranker(settings.rerank_model, rerank_load_message)
-    return RerankingRetriever(pg, reranker), pg, reranker
+    retriever = RerankingRetriever(pg, reranker, old_news_factor=settings.rerank_old_news_factor,
+                                   old_news_days=settings.old_news_days)
+    return retriever, pg, reranker
 
 
 def build_retriever(settings: Settings, embedder: Embedder | None = None) -> Retriever:
@@ -44,6 +46,7 @@ def build_llm(settings: Settings, *, max_retries: int = 2):
     from usbot.adapters.llm import OpenAICompatibleLLM
     return OpenAICompatibleLLM(settings.llm_base_url, settings.llm_api_key, settings.llm_model,
                                enable_thinking=settings.enable_thinking,
+                               temperature=settings.llm_temperature,
                                timeout=settings.llm_timeout, max_retries=max_retries,
                                reasoning_effort=settings.llm_reasoning_effort)
 

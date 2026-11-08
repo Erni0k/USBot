@@ -124,9 +124,9 @@ def test_kontekst_wiadomosci_i_strumien_zdarzen():
     assert messages[1:] == [*history, {"role": "user", "content": "Jak skonfigurować eduroam?"}]
     system = messages[0]["content"]
     assert system.startswith("Jesteś asystentem Uniwersytetu Śląskiego")
-    assert (f"<context>\n[Źródło: {EDUROAM}]\nEduroam > Konfiguracja\nKrok 1\n\n"
-            f"[Źródło: {EDUROAM}]\nEduroam > Konfiguracja\nKrok 2\n\n"
-            f"[Źródło: {WNP}]\nWNP > Dziekanat\npon 10–14\n</context>\n") in system
+    assert ("<context>\n[Źródło 1]\nEduroam > Konfiguracja\nKrok 1\n\n"
+            "[Źródło 1]\nEduroam > Konfiguracja\nKrok 2\n\n"
+            "[Źródło 2]\nWNP > Dziekanat\npon 10–14\n</context>\n") in system
 
 
 def test_top_k_przekazane_do_retrievera_i_pierwsze_pytanie_jednym_zapytaniem():

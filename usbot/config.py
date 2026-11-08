@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     # chat_template_kwargs.enable_thinking — Qwen3 wyłącza tam dopiero
     # LLM_REASONING_EFFORT=none. Puste = parametr nie jest wysyłany (vLLM może go odrzucić).
     llm_reasoning_effort: str | None = None
+    llm_temperature: float = 0.3
     # Limit czasu na połączenie z LLM-em i na każdy kolejny fragment strumienia (sekundy).
     llm_timeout: float = 60.0
 
@@ -77,6 +78,8 @@ class Settings(BaseSettings):
     rerank: EnvBool = False
     # Przy RERANK=true próg dotyczy wyniku rerankera (0–1, większy = lepszy), nie odległości.
     min_rerank_score: float = 0.01
+    # Mnożnik wyniku rerankera dla aktualności starszych niż OLD_NEWS_DAYS; 1 = wyłączone.
+    rerank_old_news_factor: float = 1.0
 
     # --- API HTTP (usbot/api) ---
     # Ile ostatnich tur (pytanie + odpowiedź) historii klienta trafia do ChatService.
@@ -150,6 +153,8 @@ class Settings(BaseSettings):
     embed_batch: int = 16          # ile stron naraz do embeddingu
     crawl_fresh: EnvBool = False
     crawl_refetch: EnvBool = False  # po zmianie ekstrakcji tekstu
+    # Adresy sekcji po przecinku (np. https://rekrutacja.us.edu.pl): crawl tylko w nich
+    crawl_only: str = ""
     # Fragment, którego treść (bez prefiksu) występuje na więcej niż BOILERPLATE_URLS
     # stronach, to boilerplate i nie trafia do chunks. 0 = wyłączone.
     boilerplate_urls: int = 20

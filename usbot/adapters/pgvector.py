@@ -11,7 +11,7 @@ import psycopg
 from pgvector.psycopg import register_vector
 
 from usbot.core.models import Chunk
-from usbot.core.ranking import merge_best, rank_key, rrf, select
+from usbot.core.ranking import for_question_language, merge_best, rank_key, rrf, select
 from usbot.ports import Embedder
 
 Mode = Literal["vector", "hybrid"]
@@ -157,7 +157,7 @@ class PgvectorRetriever:
         treści i limit na stronę (select) stosujemy po złączeniu.
         """
         merged = merge_best(self.candidates(q, k) for q in queries)
-        return select(merged, k, self.max_per_url)
+        return select(for_question_language(merged, queries[-1]), k, self.max_per_url)
 
     # --- kandydaci ---
 

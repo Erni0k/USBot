@@ -37,6 +37,7 @@ CRAWL_WORKERS = settings.crawl_workers
 EMBED_BATCH = settings.embed_batch          # ile stron naraz do embeddingu
 CRAWL_FRESH = settings.crawl_fresh
 CRAWL_REFETCH = settings.crawl_refetch      # po zmianie ekstrakcji tekstu
+CRAWL_ONLY = settings.crawl_only            # tylko wskazane sekcje, np. nowy serwis
 # Fragment, ktorego tresc (bez prefiksu) wystepuje na wiecej niz BOILERPLATE_URLS stronach,
 # to boilerplate (przyciski "Udostepnij", same naglowki) - nie trafia do chunks. 0 = wylaczone.
 BOILERPLATE_URLS = settings.boilerplate_urls
@@ -351,7 +352,8 @@ def run() -> None:
 
         bar = tqdm(
             scrape.crawl(limit=CRAWL_LIMIT, max_depth=CRAWL_DEPTH,
-                         workers=CRAWL_WORKERS, cache=cache),
+                         workers=CRAWL_WORKERS, cache=cache,
+                         only_prefixes=tuple(p.strip() for p in CRAWL_ONLY.split(",") if p.strip())),
             total=CRAWL_LIMIT,
             unit="stron",
             dynamic_ncols=True,

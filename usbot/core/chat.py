@@ -10,12 +10,14 @@ Odpowiedź to strumień zdarzeń (słowników gotowych do JSON-a, np. dla SSE/We
 
 `done.answer` to tekst, który klient dopisuje do historii jako wiadomość asystenta
 (przy `refused`/`clarify` — ich `message`). Źródła pochodzą z wyników wyszukiwania,
-nie z tekstu LLM-a. ChatService nie trzyma stanu rozmowy — historię prowadzi klient.
+nie z tekstu LLM-a: model cytuje numery fragmentów, a ostatni token to lista cytowanych
+stron (usbot/core/citations.py). ChatService nie trzyma stanu rozmowy — historię prowadzi klient.
 """
 from collections.abc import Callable, Iterator, Sequence
 from datetime import date
 from typing import Literal, TypedDict
 
+from usbot.core.citations import CitationFilter, source_numbers, sources_footer, without_citations
 from usbot.core.faculties import CLARIFY_MESSAGE, expand_faculties, faculty_options, needs_faculty
 from usbot.core.models import Chunk, Message
 from usbot.core.prompts import NO_INFO, build_system_prompt, recent_turns, search_queries
@@ -148,9 +150,15 @@ class ChatService:
 
         yield {"type": "sources", "sources": sources(chunks)}
         prompt: list[Message] = [{"role": "system", "content": build_system_prompt(chunks, self.today())},
-                                 *messages]
+                                 *without_citations(messages)]
+        numbers = source_numbers(chunks)
+        citations = CitationFilter(len(numbers))
         parts: list[str] = []
-        for text in self.llm.stream(prompt):
+        for raw in self.llm.stream(prompt):
+            if text := citations.feed(raw):
+                parts.append(text)
+                yield {"type": "token", "text": text}
+        if text := citations.flush() + sources_footer(citations.cited, numbers):
             parts.append(text)
             yield {"type": "token", "text": text}
         yield {"type": "done", "answer": "".join(parts)}

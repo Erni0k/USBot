@@ -72,6 +72,12 @@ ALLOWED_DOMAINS = (
     "https://us.edu.pl",
     "https://eduroam.us.edu.pl",
     "https://usnet.us.edu.pl",
+    # Serwisy uczelni, w których są kierunki, opłaty, akademiki, biblioteka, Erasmus i sport
+    # (docs/testy.md, 6.5). Bez systemów logowania (USOSweb, APD) i książki adresowej.
+    "https://rekrutacja.us.edu.pl",
+    "https://erasmus.us.edu.pl",
+    "https://cwfis.us.edu.pl",
+    "https://ciniba.edu.pl",
 )
 
 # Sekcje najcenniejsze dla studentów. Ich podstrony trafiają do kolejki priorytetowej,
@@ -461,6 +467,7 @@ def crawl(
     workers: int = 6,
     host_delay: float = HOST_DELAY,
     cache: dict[str, dict] | None = None,
+    only_prefixes: tuple[str, ...] = (),
 ):
     """Generator: BFS po us.edu.pl. Yields Page.
 
@@ -474,8 +481,12 @@ def crawl(
     `cache` mapuje url -> {etag, last_modified, links} z poprzedniego crawla;
     pozwala pomijac niezmienione strony (304) i kontynuowac BFS z cache'owanych
     linkow.
+
+    `only_prefixes` zaweza przebieg do wskazanych sekcji (CRAWL_ONLY): startuje z nich i
+    z sitemap ich domen, a linki spoza sekcji pomija. Reszty bazy nie dotyka.
     """
     cache = cache or {}
+    prefixes = tuple(p.rstrip("/") for p in only_prefixes)
     seen: set[str] = set()
     # Kolejki per domena (domena -> FIFO), zeby URL-e zablokowanej domeny (np. usnet
     # przy limicie zadan) nie wstrzymywaly pobierania z pozostalych.
@@ -484,7 +495,8 @@ def crawl(
 
     def enqueue(url: str, depth: int, force_priority: bool = False) -> None:
         url = url.rstrip("/")
-        if url in seen or _skip(url):
+        outside = prefixes and not any(url == p or url.startswith(p + "/") for p in prefixes)
+        if url in seen or _skip(url) or outside:
             return
         seen.add(url)
         level = priority if force_priority or _is_priority(url) else queue
@@ -494,10 +506,17 @@ def crawl(
     # (usnet, eduroam, dziekanaty, strony ogolne) oraz wszystkie znalezione podstrony
     # PRIORITY_PREFIXES - potem reszta z sitemapy i BFS.
     # Kolejnosc na liscie FALLBACK_URLS = priorytet (gora = wczesniej).
-    for url in FALLBACK_URLS:
-        enqueue(url, 0, force_priority=True)
-    for url in _sitemap_urls(limit):
-        enqueue(url, 0)
+    if prefixes:
+        for prefix in prefixes:
+            enqueue(prefix, 0, force_priority=True)
+        for host in dict.fromkeys(urlsplit(p).netloc for p in prefixes):
+            for url in _sitemap_urls(limit, f"https://{host}/sitemap.xml"):
+                enqueue(url, 0, force_priority=True)
+    else:
+        for url in FALLBACK_URLS:
+            enqueue(url, 0, force_priority=True)
+        for url in _sitemap_urls(limit):
+            enqueue(url, 0)
 
     visited = 0
     in_flight: dict[Future, tuple[str, int]] = {}  # zadanie -> (domena, glebokosc)

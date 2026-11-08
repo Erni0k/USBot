@@ -22,7 +22,7 @@ def test_build_context_pusta_lista():
 
 def test_build_context_naglowki_zrodel():
     ctx = build_context([chunk(1, "https://a/", content="A"), chunk(2, "https://b/", content="B")])
-    assert ctx == "[Źródło: https://a/]\nA\n\n[Źródło: https://b/]\nB"
+    assert ctx == "[Źródło 1]\nA\n\n[Źródło 2]\nB"
 
 
 def test_build_query_trzy_ostatnie_pytania_uzytkownika():
@@ -174,10 +174,10 @@ def test_data_publikacji_tylko_przy_komunikatach_i_wydarzeniach():
         _dated(3, "student", datetime(2019, 11, 1)),   # strona informacyjna: bez daty
         _dated(4, "news", None),
     ])
-    assert "[Źródło: https://us.edu.pl/1/ | komunikat z 2024-10-22]" in ctx
-    assert "[Źródło: https://us.edu.pl/2/ | wydarzenie z 2018-05-14]" in ctx
-    assert "[Źródło: https://us.edu.pl/3/]\n" in ctx and "2019" not in ctx
-    assert "[Źródło: https://us.edu.pl/4/]\n" in ctx
+    assert "[Źródło 1 | komunikat z 2024-10-22]" in ctx
+    assert "[Źródło 2 | wydarzenie z 2018-05-14]" in ctx
+    assert "[Źródło 3]\n" in ctx and "2019" not in ctx
+    assert "[Źródło 4]\n" in ctx
 
 
 @pytest.mark.parametrize("today, expected", [

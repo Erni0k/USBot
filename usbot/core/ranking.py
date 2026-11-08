@@ -4,9 +4,11 @@ Adaptery wyszukiwarek (`usbot.adapters.pgvector`) dostarczają kandydatów, a tu
 zapada, które z nich i w jakiej kolejności trafią do kontekstu. Porównania wariantów
 i wybór parametrów: docs/testy.md (6.4).
 """
+import re
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
+from datetime import date
 
 from usbot.core.models import Chunk
 from usbot.ports import Reranker, Retriever
@@ -14,6 +16,22 @@ from usbot.ports import Reranker, Retriever
 RRF_K = 60  # stała w RRF: score = Σ 1/(RRF_K + pozycja)
 # Z rerankingiem tylu najlepszych kandydatów ocenia cross-encoder; zostaje k z nich.
 RERANK_CANDIDATES = 20
+
+
+_POLISH_QUESTION = re.compile(r"[ąćęłńóśźż]|\b(?:jak|gdzie|czy|kiedy|ile|co|kto|jakie?|jaka|dlaczego)\b",
+                              re.IGNORECASE)
+_ENGLISH_PAGE = re.compile(r"/(?:en|english-[^/]*)(?:/|$)")
+
+
+def for_question_language(chunks: list[Chunk], question: str) -> list[Chunk]:
+    """Dla pytania po polsku pomija angielskie wersje stron (/en/, /english-…).
+
+    Te wersje (często nieprzetłumaczone kopie albo strony dla obcokrajowców) zajmowały
+    miejsca w kontekście i zmieniały odpowiedź. Gdy nie ma nic innego, zostają.
+    """
+    if not _POLISH_QUESTION.search(question):
+        return chunks
+    return [c for c in chunks if not _ENGLISH_PAGE.search(c.url)] or chunks
 
 
 def rank_key(c: Chunk) -> tuple:
@@ -107,14 +125,30 @@ class RerankingRetriever:
 
     Duplikaty treści i limit na stronę stosuje `inner` (przed rerankingiem), więc
     wynik rerankera ich nie przywraca. Zostaje k fragmentów z najwyższym `rerank`.
+
+    Reranker nie zna daty, więc stare komunikaty wygrywają z aktualnymi stronami:
+    `old_news_factor` < 1 mnoży wynik aktualności i wydarzeń starszych niż `old_news_days`.
     """
 
     def __init__(self, inner: Retriever, reranker: Reranker,
-                 candidates: int = RERANK_CANDIDATES) -> None:
+                 candidates: int = RERANK_CANDIDATES, *, old_news_factor: float = 1.0,
+                 old_news_days: int = 730, today: Callable[[], date] = date.today) -> None:
         self.inner = inner
         self.reranker = reranker
         self.candidates = candidates
+        self.old_news_factor = old_news_factor
+        self.old_news_days = old_news_days
+        self.today = today
+
+    def _is_old_news(self, c: Chunk) -> bool:
+        return (c.page_type in ("news", "event") and c.published_at is not None
+                and (self.today() - c.published_at.date()).days > self.old_news_days)
 
     def search(self, queries: Sequence[str], k: int) -> list[Chunk]:
-        chunks = self.inner.search(queries, max(k, self.candidates))
-        return rerank(self.reranker, queries, chunks)[:k]
+        chunks = rerank(self.reranker, queries, self.inner.search(queries, max(k, self.candidates)))
+        if self.old_news_factor != 1.0:
+            for c in chunks:
+                if self._is_old_news(c):
+                    c.rerank *= self.old_news_factor
+            chunks.sort(key=lambda c: (-c.rerank, *rank_key(c)))
+        return chunks[:k]

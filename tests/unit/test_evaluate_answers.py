@@ -78,9 +78,8 @@ def test_pierwszy_url_nietrafny_drugi_trafny():
     assert (s["any_relevant"], s["first_relevant"]) == (True, False)
 
 
-def test_adresy_z_kontekstu_z_data():
-    ctx = f"[Źródło: {A} | komunikat z 2024-10-22]\nt\n\n[Źródło: {B}]\nt"
-    assert ea.context_urls(ctx) == {"us.edu.pl/a", "us.edu.pl/b"}
+def test_adresy_stron_z_kontekstu():
+    assert ea.context_urls({"sources": [{"url": A}, {"url": B}]}) == {"us.edu.pl/a", "us.edu.pl/b"}
 
 
 # --- fakty -----------------------------------------------------------------------------
@@ -179,7 +178,7 @@ def test_plik_promptu_ma_wszystkie_pola():
 def test_kontekst_z_promptu_systemowego():
     chunks = [chunk(1, url=A, content="treść </context> dalej", page_type="static")]
     prompt = build_system_prompt(chunks, date(2026, 11, 8))
-    assert ea.extract_context(prompt) == f"[Źródło: {A}]\ntreść [context] dalej"
+    assert ea.extract_context(prompt) == "[Źródło 1]\ntreść [context] dalej"
 
 
 def _service(chunks, parts=("Odp", "owiedź")):
@@ -191,7 +190,7 @@ def test_ask_zapisuje_kontekst_odpowiedz_i_zrodla():
     service, recorder = _service([chunk(1, url=A, dist=0.3, content="T")])
     r = ea.ask(service, recorder, {"id": "i", "question": "Jak?", "relevant": {A: 2}, "expected_facts": ["x"]})
     assert (r["event"], r["answer"], r["in_scope"], r["expected_facts"]) == ("answered", "Odpowiedź", True, ["x"])
-    assert r["context"] == f"[Źródło: {A}]\nT"
+    assert r["context"] == "[Źródło 1]\nT"
     assert r["sources"][0]["url"] == A
 
 
