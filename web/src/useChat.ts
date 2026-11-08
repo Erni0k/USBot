@@ -44,7 +44,8 @@ export function useChat() {
       // „Spróbuj ponownie” zastępuje turę z błędem, zamiast dopisywać nową
       const base = replaceId ? turnsRef.current.filter((t) => t.id !== replaceId) : turnsRef.current;
       const history = buildHistory(base);
-      const next: Turn[] = [...base, { id, question, status: "searching", sources: [], answer: "" }];
+      const turn: Turn = { id, question, status: "searching", sources: [], answer: "", followup: history.length > 0 };
+      const next: Turn[] = [...base, turn];
       turnsRef.current = next;
       setTurns(next);
 

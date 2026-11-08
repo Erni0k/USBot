@@ -50,14 +50,29 @@ def norm_url(url: str) -> str:
     return url.rstrip("/")
 
 
+def awaiting_labels(q: dict) -> bool:
+    """Wpis z evaluation/feedback_export.py, którego nikt jeszcze nie oznaczył.
+
+    Pusty `relevant` znaczy w tym zbiorze „spoza zakresu”, więc nieoznaczone pytanie
+    zafałszowałoby dobór progu. Pytanie z ocen uznane za spoza zakresu ma `out_of_scope`.
+    """
+    return q.get("source") == "feedback" and not q.get("relevant") and not q.get("out_of_scope")
+
+
 def load_queries(path: Path) -> list[dict]:
     queries = []
+    skipped = 0
     with path.open(encoding="utf-8") as f:
         for line in f:
             if line.strip():
                 q = json.loads(line)
+                if awaiting_labels(q):
+                    skipped += 1
+                    continue
                 q["relevant"] = {norm_url(u): g for u, g in q.get("relevant", {}).items()}
                 queries.append(q)
+    if skipped:
+        print(f"Pominięto {skipped} nieoznaczonych pytań z ocen (source=feedback).", file=sys.stderr)
     return queries
 
 
@@ -155,6 +170,8 @@ def main() -> None:
     args = ap.parse_args()
 
     queries = load_queries(args.file)
+    if not queries:
+        sys.exit(f"Brak oznaczonych pytań w {args.file}")
     ks = sorted(args.k)
     max_k = ks[-1]
     # Sweep patrzy na tyle fragmentów, ile dostaje LLM — może to być więcej niż max_k

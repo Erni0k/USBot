@@ -170,7 +170,8 @@ export default function App() {
         <p>
           <strong>Bot może się mylić – sprawdź źródło. Nie wpisuj danych osobowych.</strong>{" "}
           <span className="privacy">
-            Pytania są zapisywane bez adresu IP przez 30 dni w celu poprawy jakości odpowiedzi.
+            Pytania, a przy ocenie także odpowiedź i komentarz, są zapisywane bez adresu IP przez 30 dni w celu poprawy
+            jakości odpowiedzi.
           </span>
         </p>
       </footer>

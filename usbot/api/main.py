@@ -1,4 +1,4 @@
-"""Aplikacja FastAPI: POST /api/chat (SSE), GET /api/health, GET /api/faculties.
+"""Aplikacja FastAPI: POST /api/chat (SSE), POST /api/feedback, GET /api/health, GET /api/faculties.
 
 Uruchomienie: `uvicorn usbot.api.main:app` (szczegóły: docs/uruchomienie.md). Serwer jest
 bezstanowy — historię rozmowy przysyła klient w każdym żądaniu. Zabezpieczenia
@@ -12,6 +12,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 
 import anyio
+import psycopg
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
@@ -20,10 +21,19 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIASGIMiddleware
 
 from usbot.api.chatlog import ChatLog
+from usbot.api.feedback import build_record
 from usbot.api.limits import BodySizeLimit, Busy, SecurityHeaders, StreamSlots
 from usbot.api.metrics import Metrics
 from usbot.api.resources import Resources, build_resources
-from usbot.api.schemas import ChatRequest, Check, Faculty, Health, check_limits
+from usbot.api.schemas import (
+    ChatRequest,
+    Check,
+    Faculty,
+    FeedbackRequest,
+    Health,
+    check_feedback_limits,
+    check_limits,
+)
 from usbot.api.sse import stream_events
 from usbot.config import Settings, get_settings
 from usbot.core.faculties import faculty_options
@@ -68,16 +78,23 @@ def create_app(settings: Settings | None = None,
     limiter = Limiter(key_func=client_ip, default_limits=[settings.api_rate_limit_default],
                       storage_uri=settings.api_rate_limit_storage, strategy="moving-window")
 
-    async def cleanup_loop() -> None:
+    async def cleanup_loop(resources: Resources) -> None:
         while True:
             await anyio.to_thread.run_sync(chatlog.cleanup)
+            if resources.feedback is not None:
+                try:
+                    await anyio.to_thread.run_sync(resources.feedback.purge,
+                                                   settings.feedback_retention_days)
+                except psycopg.Error as exc:  # baza wróci, spróbujemy za godzinę
+                    log.warning("oceny: nie udało się usunąć starych treści: %s",
+                                type(exc).__name__)
             await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Ładowanie modeli trwa kilka–kilkanaście sekund: w wątku, by nie blokować pętli
         app.state.resources = await anyio.to_thread.run_sync(resources_factory, settings)
-        cleanup = asyncio.create_task(cleanup_loop())
+        cleanup = asyncio.create_task(cleanup_loop(app.state.resources))
         log.info("USBot API gotowe")
         try:
             yield
@@ -129,6 +146,25 @@ def create_app(settings: Settings | None = None,
         return SlotStreamingResponse(
             stream_events(resources.service, body.message, history, trace=trace),
             release=release, media_type="text/event-stream", headers=SSE_HEADERS)
+
+    @app.post("/api/feedback", status_code=204,
+              responses={429: {"description": "Rate limit"},
+                         503: {"description": "Nie udało się zapisać oceny (baza niedostępna)"}})
+    @limiter.limit(settings.api_rate_limit_feedback)
+    async def feedback(request: Request, body: FeedbackRequest) -> Response:
+        """Ocena odpowiedzi (+1/-1). Bez danych identyfikujących — usbot/api/feedback.py."""
+        check_feedback_limits(body, settings)
+        store = request.app.state.resources.feedback
+        unavailable = JSONResponse({"detail": "Nie udało się zapisać oceny — spróbuj za chwilę."},
+                                   status_code=503, headers={"Retry-After": "5"})
+        if store is None:
+            return unavailable
+        try:
+            await anyio.to_thread.run_sync(store.add, build_record(body, settings))
+        except psycopg.Error as exc:  # w logu tylko typ — komunikat może zawierać treść wiersza
+            log.warning("oceny: błąd zapisu: %s", type(exc).__name__)
+            return unavailable
+        return Response(status_code=204)
 
     @app.get("/api/health", response_model=Health,
              responses={503: {"model": Health, "description": "Któreś sprawdzenie nie przeszło"}})

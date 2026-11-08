@@ -95,8 +95,12 @@ class Settings(BaseSettings):
     api_max_history_messages: int = Field(40, ge=0)
     api_max_history_chars: int = Field(40_000, ge=0)   # suma treści wiadomości historii
     api_max_body_bytes: int = Field(256 * 1024, ge=1024)
+    # Limity POST /api/feedback; pytanie ma ten sam limit co w POST /api/chat.
+    api_max_feedback_answer_chars: int = Field(20_000, ge=1)
+    api_max_feedback_comment_chars: int = Field(500, ge=1)
     # Rate limiting na adres IP (składnia slowapi/limits, kilka limitów po „;”).
     api_rate_limit_chat: str = "10/minute;200/day"
+    api_rate_limit_feedback: str = "10/minute;200/day"  # jedna ocena na odpowiedź czatu
     api_rate_limit_default: str = "60/minute"        # /api/health, /api/faculties
     api_rate_limit_storage: str = "memory://"         # przy kilku procesach: redis://…
     # Ile odpowiedzi generuje się naraz: w sumie i dla jednego adresu IP.
@@ -116,6 +120,8 @@ class Settings(BaseSettings):
     chat_log_dir: str = str(ROOT / "logs")
     chat_log_retention_days: int = Field(30, ge=1)
     chat_log_max_question_chars: int = Field(500, ge=0)
+    # Po tylu dniach z tabeli feedback znikają treści (ocena i konfiguracja zostają).
+    feedback_retention_days: int = Field(30, ge=1)
 
     @field_validator("api_cors_origins")
     @classmethod

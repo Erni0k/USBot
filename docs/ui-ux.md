@@ -96,11 +96,12 @@ historii trafia pytanie i `done.answer`; przy `refused`/`clarify` — ich komuni
 `error` — samo pytanie; po przerwaniu — pytanie i wygenerowana część (użytkownik ją widzi,
 więc model też powinien). Logika: `web/src/history.ts`.
 
-**Oceny 👍/👎** są pod każdą odpowiedzią `done`. Endpoint `POST /api/feedback` powstanie w
-etapie 7A — do tego czasu (`VITE_FEEDBACK_ENABLED=false`, domyślnie) przyciski są widoczne,
-ale wyłączone, z dopiskiem „Oceny będą dostępne wkrótce.”. Po włączeniu flagi strona wysyła
-`{question, answer, rating: "up"|"down", sources: [url…]}` (kształt do potwierdzenia z
-backendem w 7A); odpowiedź `404`/`405` wyłącza oceny do końca wizyty.
+**Oceny 👍/👎** są pod każdą odpowiedzią `done`. 👍 wysyła ocenę od razu. 👎 otwiera
+formularz z opcjonalnym komentarzem i przypomnieniem, by nie wpisywać danych osobowych:
+fokus trafia do pola, **Esc** albo **Anuluj** zamyka formularz i wraca na przycisk 👎, a
+ocena idzie do serwera dopiero po **Wyślij ocenę**. Jedna odpowiedź to jedna ocena. Żądanie
+opisuje [API](api.md) (3.1, `POST /api/feedback`). Przy `VITE_FEEDBACK_ENABLED=false`
+przyciski są widoczne, ale wyłączone, a odpowiedź `404`/`405` wyłącza oceny do końca wizyty.
 
 ### Zrzuty ekranu
 
@@ -111,7 +112,7 @@ Zrzuty z prawdziwym API (Ollama `qwen3:8b`, baza z 2026-11), robione skryptem
 
 ![Odpowiedź w trakcie generowania](img/ui/02-strumieniowanie.png)
 
-**Odpowiedź ze źródłami i ocenami** (oceny wyłączone do etapu 7A):
+**Odpowiedź ze źródłami i ocenami** (zrzut sprzed włączenia ocen — przyciski są na nim wyłączone):
 
 ![Źródła jako karty i przyciski ocen](img/ui/03-zrodla-i-oceny.png)
 

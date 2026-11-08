@@ -107,6 +107,7 @@ wypisuje odpowiedź tak jak przed wydzieleniem warstw (źródeł osobno nie poka
 | `schemas.py` | modele żądań i odpowiedzi (pydantic), `check_limits()` — limity długości pytania i historii |
 | `limits.py` | limit równoległych strumieni (`StreamSlots`), limit wielkości ciała, nagłówki bezpieczeństwa |
 | `chatlog.py` | dziennik rozmów bez IP, retencja i czyszczenie (2.4); `publish()` przekazuje każdy rekord także do metryk |
+| `feedback.py` | `POST /api/feedback`: tabela `feedback` (także migracja w istniejącej bazie), zapis bez danych identyfikujących, retencja treści (2.4) |
 | `metrics.py` | `GET /api/metrics`: liczniki odpowiedzi według wyniku, odsetek `refused`, histogramy czasu do 1. tokenu i całej odpowiedzi (format Prometheusa, w pamięci procesu) |
 
 Serwer jest bezstanowy: historię przysyła klient, a `ChatService` (parametr
@@ -417,6 +418,47 @@ dni. Strona czatu musi informować o zapisywaniu pytań (obowiązek informacyjny
 prosić, by nie wpisywać danych osobowych. Dziennik nie zawiera identyfikatorów, po których
 dałoby się odnaleźć wpisy konkretnej osoby (art. 11) — żądanie usunięcia można spełnić
 przez wyszukanie treści pytania albo usunięcie pliku z danego dnia.
+
+### Oceny odpowiedzi (RODO)
+
+Tabela `feedback` (`POST /api/feedback`) działa według tych samych zasad co dziennik rozmów.
+Ocenę wysyła użytkownik świadomie, przyciskiem, a formularz przy 👎 przypomina, by nie
+wpisywać danych osobowych.
+
+| Pole | Treść | Po co |
+|---|---|---|
+| `created_at` | czas zapisu | odsetek 👎 w czasie, retencja |
+| `question` | pytanie po usunięciu e-maili i ciągów ≥6 cyfr, najwyżej 500 znaków | nowe pytania testowe |
+| `answer` | odpowiedź bota, po tym samym usuwaniu | ocena, co poszło źle |
+| `comment` | opcjonalny komentarz, po tym samym usuwaniu, najwyżej 500 znaków | wskazówka przy oznaczaniu |
+| `sources` | adresy źródeł z odległościami (i wynikami rerankera) | czy zawiodło wyszukiwanie |
+| `rating` | `1` / `-1` | trend |
+| `followup` | czy pytanie padło w trakcie rozmowy | samo pytanie może nie mieć sensu |
+| `retrieval_mode`, `rerank`, `threshold`, `llm_model` | konfiguracja z ustawień serwera | porównanie konfiguracji |
+
+**Czego nie zapisujemy:** adresu IP ani żadnego identyfikatora klienta (nawet dziennego
+skrótu z dziennika rozmów), historii rozmowy, nagłówków. Oceny nie da się powiązać z
+wpisem w dzienniku rozmów ani z innymi ocenami tej samej osoby.
+
+**Różnica względem dziennika:** tu zapisywana jest treść odpowiedzi, bo bez niej nie da
+się ocenić, co było nie tak. Odpowiedź przechodzi przez `redact()`, więc znikają z niej
+także publiczne numery telefonów (np. dziekanatów) — do oznaczania nie są potrzebne.
+
+**Retencja:** po `FEEDBACK_RETENTION_DAYS` (domyślnie 30 dni, jak informuje strona czatu)
+serwer przy starcie i co godzinę zeruje `question`, `answer` i `comment`; ocena, źródła i
+konfiguracja zostają, żeby dało się liczyć trend. Plik roboczy z
+`evaluation/feedback_export.py` ma te same treści: jest w `.gitignore` i należy go usunąć
+po oznaczeniu ([Testy](testy.md), 6.6).
+
+**Do decyzji z IOD:** kopie bazy (`pg_dump`, rotacja domyślnie do 3 miesięcy) zawierają
+tabelę `feedback`, więc treści ocen mogą w nich zostać dłużej niż 30 dni. Rozwiązaniem
+byłoby `--exclude-table-data=feedback` w usłudze `backup` — kosztem utraty ocen przy
+odtwarzaniu z kopii.
+
+**Treść ocen jest niezaufana.** API nie ma logowania, a serwer jest bezstanowy, więc klient
+może przysłać dowolne pytanie i odpowiedź. Limit żądań ogranicza ilość, walidacja przyjmuje
+tylko źródła z domeny uczelni, a wpisy trafiają do zbioru testowego dopiero po ręcznym
+przejrzeniu. Odsetek 👎 da się w ten sposób zafałszować, więc to wskaźnik, nie pomiar.
 
 ### Zależności i sekrety
 

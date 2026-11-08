@@ -6,7 +6,9 @@ timeoutami i sprawdzeniami dla /api/health. Żadne żądanie nie ładuje modelu.
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 
+from usbot.api.feedback import FeedbackRecord, PgFeedbackStore
 from usbot.api.sse import ChatStreamer
 from usbot.config import Settings
 
@@ -16,11 +18,20 @@ log = logging.getLogger("usbot.api")
 HealthCheck = Callable[[], dict]
 
 
+class FeedbackStore(Protocol):
+    """Zapis ocen odpowiedzi (w testach atrapa)."""
+
+    def add(self, record: FeedbackRecord) -> int: ...
+
+    def purge(self, retention_days: int) -> int: ...
+
+
 @dataclass
 class Resources:
     service: ChatStreamer
     checks: dict[str, HealthCheck] = field(default_factory=dict)
     close: Callable[[], None] = lambda: None
+    feedback: FeedbackStore | None = None
 
 
 def build_resources(settings: Settings) -> Resources:
@@ -62,4 +73,5 @@ def build_resources(settings: Settings) -> Resources:
     if reranker is not None:
         checks["reranker"] = lambda: {"model": settings.rerank_model,
                                       "score": round(reranker.score(["test"], ["test"])[0], 3)}
-    return Resources(service=service, checks=checks, close=pool.close)
+    return Resources(service=service, checks=checks, close=pool.close,
+                     feedback=PgFeedbackStore(pool))

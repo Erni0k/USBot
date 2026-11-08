@@ -20,6 +20,7 @@ nagłówki, dziennik rozmów) opisuje [Architektura](architektura.md) (2.4).
 | Metoda | Ścieżka | Odpowiedź | Opis |
 |---|---|---|---|
 | `POST` | `/api/chat` | `text/event-stream` | Odpowiedź na pytanie jako strumień zdarzeń SSE |
+| `POST` | `/api/feedback` | `204` | Ocena odpowiedzi (+1/-1) z opcjonalnym komentarzem |
 | `GET` | `/api/health` | JSON, `200` / `503` | Stan bazy, modelu embeddingów (i rerankera) oraz LLM-a |
 | `GET` | `/api/faculties` | JSON | Wydziały — np. przyciski po zdarzeniu `clarify` |
 | `GET` | `/api/metrics` | tekst Prometheusa | Liczniki odpowiedzi, odsetek `refused`, czas do 1. tokenu — **niepubliczny** (Caddy odpowiada 404; 3.1, „GET /api/metrics”) |
@@ -162,6 +163,47 @@ for (;;) {
   }
 }
 ```
+
+### POST /api/feedback
+
+Ocena jednej odpowiedzi. Serwer jest bezstanowy, więc treść przysyła klient:
+
+```json
+{
+  "question": "Jak ubiegać się o stypendium socjalne?",
+  "answer": "Wniosek składa się w USOSweb…",
+  "rating": -1,
+  "sources": [{"url": "https://us.edu.pl/student/stypendia/", "dist": 0.3128, "rerank": null}],
+  "comment": "To strona o innym stypendium",
+  "followup": false
+}
+```
+
+| Pole | Typ | Ograniczenia |
+|---|---|---|
+| `question` | string | 1–`API_MAX_MESSAGE_CHARS` (2000) znaków, nie same spacje |
+| `answer` | string | 1–`API_MAX_FEEDBACK_ANSWER_CHARS` (20 000) znaków |
+| `rating` | `1` / `-1` | inne wartości → `422` |
+| `sources` | lista, domyślnie `[]` | najwyżej 50; `url`: `https://` w domenie `us.edu.pl` lub jej subdomenie; `dist`: 0–2; `rerank`: 0–1 albo `null` |
+| `comment` | string / `null` | opcjonalny, najwyżej `API_MAX_FEEDBACK_COMMENT_CHARS` (500) znaków |
+| `followup` | bool, domyślnie `false` | `true`, gdy pytanie zadano z historią rozmowy |
+
+Inne pola są odrzucane (`422`) — wersję konfiguracji (`RETRIEVAL_MODE`, `RERANK`, próg,
+model) dopisuje serwer z własnych ustawień, w chwili zapisu oceny. Znaczy to, że ocena
+odpowiedzi wygenerowanej tuż przed zmianą konfiguracji dostanie już nową wersję.
+
+| Kod | Kiedy |
+|---|---|
+| `204` | zapisano (bez treści odpowiedzi) |
+| `422` | niepoprawne pole albo przekroczony limit (format jak w `/api/chat`) |
+| `411` / `413` | jak w `/api/chat` |
+| `429` | rate limit na adres IP (`API_RATE_LIMIT_FEEDBACK`, domyślnie 10/min i 200/dzień), z `Retry-After` |
+| `503` | baza niedostępna, z `Retry-After` (5 s) |
+
+Zapis jest bez adresu IP i identyfikatora klienta; pytanie, odpowiedź i komentarz przechodzą
+przez to samo usuwanie danych co dziennik rozmów, a po `FEEDBACK_RETENTION_DAYS` znikają
+(ocena, źródła i konfiguracja zostają). Szczegóły: [Architektura](architektura.md) (2.4).
+Co dalej dzieje się z ocenami: [Testy](testy.md) (6.6).
 
 ### GET /api/health
 
@@ -453,6 +495,9 @@ wcześniejsze kopie są usuwane w tej samej transakcji (opis reguły w README).
 | `API_MAX_HISTORY_CHARS` | `40000` | API: łączna długość historii (znaki); więcej → `422` |
 | `API_MAX_BODY_BYTES` | `262144` | API: największe ciało żądania (bajty); większe → `413` |
 | `API_RATE_LIMIT_CHAT` | `10/minute;200/day` | API: limit `POST /api/chat` na adres IP (składnia slowapi, limity po „;”) |
+| `API_RATE_LIMIT_FEEDBACK` | `10/minute;200/day` | API: limit `POST /api/feedback` na adres IP |
+| `API_MAX_FEEDBACK_ANSWER_CHARS` / `API_MAX_FEEDBACK_COMMENT_CHARS` | `20000` / `500` | API: najdłuższa odpowiedź i komentarz w ocenie; dłuższe → `422` |
+| `FEEDBACK_RETENTION_DAYS` | `30` | Po ilu dniach z tabeli `feedback` znikają pytanie, odpowiedź i komentarz |
 | `API_RATE_LIMIT_DEFAULT` | `60/minute` | API: limit pozostałych endpointów na adres IP |
 | `API_RATE_LIMIT_STORAGE` | `memory://` | API: gdzie liczyć limity; przy kilku procesach `redis://host:6379` |
 | `API_MAX_STREAMS` / `API_MAX_STREAMS_PER_CLIENT` | `4` / `2` | API: ile odpowiedzi generuje się naraz — w sumie (`503`) i na adres IP (`429`) |

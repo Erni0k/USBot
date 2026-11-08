@@ -48,4 +48,6 @@ export interface Turn {
   clarify?: { message: string; options: FacultyOption[] };
   error?: { code: string; message: string; retryAfter?: number };
   rating?: Rating;
+  /** Pytanie zadane w trakcie rozmowy (wysłane z historią) — samo może nie mieć sensu. */
+  followup?: boolean;
 }

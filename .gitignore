@@ -29,3 +29,5 @@ logs/
 !.env.example
 # kopie bazy pobrane z wolumenu backups
 backups/
+# plik roboczy z treściami od użytkowników (evaluation/feedback_export.py)
+evaluation/feedback_do_oznaczenia.jsonl

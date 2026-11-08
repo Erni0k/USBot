@@ -11,7 +11,7 @@ COPY web/ ./
 # Wartości VITE_* są wkompilowywane w JavaScript strony (to nie sekrety). Puste
 # VITE_API_BASE_URL = ten sam origin: /api obsługuje Caddy.
 ARG VITE_API_BASE_URL=
-ARG VITE_FEEDBACK_ENABLED=false
+ARG VITE_FEEDBACK_ENABLED=true
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL} VITE_FEEDBACK_ENABLED=${VITE_FEEDBACK_ENABLED}
 RUN npm run build
 

@@ -43,6 +43,8 @@ us-chatbot/
 │   ├── evaluate.py     # metryki retrievalu: Hit/Recall/Precision/nDCG@k, MRR, dobór progu (odległość / reranker)
 │   ├── latency.py      # czas do pierwszego tokenu i całkowity przez API
 │   ├── injection.py    # próby prompt injection na LLM-ie (bieżący prompt)
+│   ├── feedback_export.py  # oceny 👎 → plik roboczy do ręcznego oznaczenia (docs/testy.md, 6.6)
+│   ├── feedback_report.py  # odsetek 👎 w czasie i najczęstsze tematy pytań z 👎
 │   └── queries.jsonl   # pytania testowe z oznaczonymi URL-ami
 ├── infra/              # init.sql (schemat bazy), Caddyfile, ingest/ (harmonogram w kontenerze)
 ├── docker-compose.yml  # lokalnie: baza Postgres (port 5433)
@@ -282,7 +284,7 @@ Konfiguracja (`web/.env`, wzór w `web/.env.example`):
 |---|---|---|
 | `VITE_API_BASE_URL` | puste | Adres API widziany z przeglądarki. Puste = ten sam origin (`/api`): w dev przez proxy Vite, w produkcji przez reverse proxy. Inny origin wymaga `API_CORS_ORIGINS` w API |
 | `VITE_DEV_PROXY_TARGET` | `http://127.0.0.1:8000` | Dokąd `npm run dev` / `npm run preview` przekazuje `/api` (np. `:8080` przy vLLM na 8000) |
-| `VITE_FEEDBACK_ENABLED` | `false` | Oceny 👍/👎 (`POST /api/feedback`, etap 7A); `false` = przyciski widoczne, ale wyłączone |
+| `VITE_FEEDBACK_ENABLED` | `true` | Oceny 👍/👎 (`POST /api/feedback`); `false` = przyciski widoczne, ale wyłączone |
 
 ```bash
 npm test           # Vitest: parser SSE, historia, Markdown
@@ -391,6 +393,8 @@ nie trafiają do `os.environ` — zmienne bibliotek (np. `HF_HOME`) ustaw w śro
 | `API_MAX_MESSAGE_CHARS` / `API_MAX_HISTORY_MESSAGES` / `API_MAX_HISTORY_CHARS` | API: limity długości pytania i historii (przekroczenie → `422`) | `2000` / `40` / `40000` |
 | `API_MAX_BODY_BYTES` | API: największe ciało żądania (bajty) | `262144` |
 | `API_RATE_LIMIT_CHAT` / `API_RATE_LIMIT_DEFAULT` | API: rate limiting na adres IP | `10/minute;200/day` / `60/minute` |
+| `API_RATE_LIMIT_FEEDBACK` | API: limit `POST /api/feedback` na adres IP | `10/minute;200/day` |
+| `FEEDBACK_RETENTION_DAYS` | Po ilu dniach z tabeli `feedback` znikają treści (ocena zostaje) | `30` |
 | `API_RATE_LIMIT_STORAGE` | API: liczniki limitów (`redis://…` przy kilku procesach) | `memory://` |
 | `API_MAX_STREAMS` / `API_MAX_STREAMS_PER_CLIENT` | API: równoległe odpowiedzi w sumie / na IP | `4` / `2` |
 | `API_DOCS` | API: dokumentacja OpenAPI (`/docs`) | `false` |

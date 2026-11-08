@@ -1,6 +1,6 @@
 import { API_BASE } from "./config";
 import { SseParser } from "./sse";
-import type { ChatEvent, FacultyOption, HistoryMessage, Rating } from "./types";
+import type { ChatEvent, FacultyOption, HistoryMessage, Source } from "./types";
 
 /** Odpowiedź API bez strumienia (422, 429, 503…). */
 export class HttpError extends Error {
@@ -96,13 +96,15 @@ export async function getFaculties(): Promise<FacultyOption[]> {
 export interface FeedbackPayload {
   question: string;
   answer: string;
-  rating: Rating;
-  sources: string[];
+  rating: 1 | -1;
+  sources: Pick<Source, "url" | "dist" | "rerank">[];
+  comment: string | null;
+  followup: boolean;
 }
 
 /**
- * POST /api/feedback (etap 7A — kształt żądania do potwierdzenia z backendem).
- * Rzuca HttpError; 404/405 oznacza, że serwer jeszcze nie ma tego endpointu.
+ * POST /api/feedback (docs/api.md, 3.1). Rzuca HttpError; 404/405 oznacza serwer
+ * bez tego endpointu (np. starsza wersja API).
  */
 export async function sendFeedback(payload: FeedbackPayload): Promise<void> {
   const res = await fetch(`${API_BASE}/api/feedback`, {

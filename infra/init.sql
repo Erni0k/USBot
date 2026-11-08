@@ -56,3 +56,22 @@ CREATE TABLE IF NOT EXISTS pages (
 
 -- Liczenie, na ilu stronach wystepuje fragment (regula boilerplate'u)
 CREATE INDEX IF NOT EXISTS pages_chunk_hashes_idx ON pages USING gin (chunk_hashes);
+
+-- Oceny odpowiedzi (POST /api/feedback). Bez IP i identyfikatora klienta; tresci po redact(),
+-- po FEEDBACK_RETENTION_DAYS zerowane. W istniejacej bazie tabele tworzy API:
+-- ensure_schema() w usbot/api/feedback.py (ta sama definicja).
+CREATE TABLE IF NOT EXISTS feedback (
+    id             BIGSERIAL PRIMARY KEY,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    question       TEXT,                     -- NULL po uplywie retencji
+    answer         TEXT,                     -- NULL po uplywie retencji
+    sources        JSONB NOT NULL DEFAULT '[]'::jsonb,  -- [{"url", "dist", "rerank"?}]
+    rating         SMALLINT NOT NULL CHECK (rating IN (-1, 1)),
+    comment        TEXT,
+    followup       BOOLEAN NOT NULL DEFAULT false,      -- pytanie zadane w trakcie rozmowy
+    retrieval_mode TEXT NOT NULL,
+    rerank         BOOLEAN NOT NULL,
+    threshold      DOUBLE PRECISION NOT NULL,           -- MAX_DISTANCE albo MIN_RERANK_SCORE
+    llm_model      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS feedback_created_at_idx ON feedback (created_at);

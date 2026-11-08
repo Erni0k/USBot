@@ -177,6 +177,17 @@ class PgvectorRetriever:
                 chunks = rrf(chunks, self._fulltext_candidates(conn, question, qvec, n))
         return chunks
 
+    def candidate_lists(self, question: str, n: int) -> tuple[list[Chunk], list[Chunk]]:
+        """Osobno n kandydatów wektorowych i n pełnotekstowych, niezależnie od `mode`.
+
+        Do oznaczania pytań testowych (evaluation/feedback_export.py): etykiety nie mogą
+        faworyzować żadnego ze sposobów wyszukiwania.
+        """
+        qvec = self.embedder.embed(question)
+        with self._connection() as conn:
+            return (self._vector_candidates(conn, qvec, n),
+                    self._fulltext_candidates(conn, question, qvec, n))
+
     def _vector_candidates(self, conn: psycopg.Connection, qvec: list[float],
                            n: int) -> list[Chunk]:
         """n najbliższych fragmentów z indeksu HNSW, posortowanych według `score`."""

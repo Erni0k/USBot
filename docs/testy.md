@@ -67,6 +67,9 @@ Status: ✅ — zaimplementowany (plik w kolumnie „Test”), ⏳ — planowany
 | T42 | Manualny | prompt + `qwen3:8b` (Ollama), `evaluation/injection.py` | Polecenie w treści strony (wprost i zakamuflowane), polecenie w pytaniu, prośba o ujawnienie promptu; serie po 5 odpowiedzi | Polecenie wprost w treści strony nie działa (0/25); wyniki i ryzyko szczątkowe w Architektura (2.4) | ✅ (2026-11-04) |
 | T43 | Jednostkowy | `build_context()`, `build_system_prompt()`, `academic_year()`, `ChatService(today=…)` | Komunikat i wydarzenie z datą, strona `student` z datą, komunikat bez daty; daty graniczne roku akademickiego; zegar ustawiony na 2027-02-10 | Data tylko przy `news`/`event` (`komunikat z RRRR-MM-DD`); rok akademicki zmienia się 1 października; dzisiejsza data i reguła o aktualności w prompcie przed kontekstem | ✅ `unit/test_prompts.py`, `unit/test_chat_service.py` |
 | T44 | Manualny | odpowiedzi bota (`qwen3:8b`) | 80 pytań z odpowiedziami wzorcowymi; A/B daty publikacji (3 powtórzenia) | Wyniki i przyczyny błędów w 6.5 | ✅ (2026-11-04) |
+| T45 | Jednostkowy | `POST /api/feedback` | Poprawna ocena; pola niepoprawne i za długie; źródła spoza `us.edu.pl` (także `evil.example\@us.edu.pl`); e-mail, telefon i album w treściach; NUL i surogat w JSON-ie; 3 oceny przy limicie 2/min; błąd bazy | `204`, konfiguracja z ustawień serwera (próg rerankera przy `RERANK=true`); `422` bez zapisu; dane usunięte ze wszystkich treści, brak IP w rekordzie; znaki niezapisywalne usunięte; `429` z `Retry-After`; `503` bez szczegółów błędu | ✅ `unit/test_feedback.py` |
+| T46 | Jedn. + integr. | `ensure_schema()`, `PgFeedbackStore`, `init.sql` | Baza bez tabeli `feedback`; retencja; ocena spoza `-1/1` w SQL | Tabela tworzona przez API, ten sam schemat co z `init.sql`, po retencji treści `NULL`, ocena zostaje; `CHECK` odrzuca złą ocenę | ✅ `integration/test_feedback.py` |
+| T47 | Jedn. + integr. | `feedback_export.py`, `feedback_report.py`, `load_queries()` | Powtórzone pytania, dopytania, drugi eksport po oznaczeniu, zepsuty plik; tematy pytań; nieoznaczony wpis w zbiorze | Format `queries.jsonl`, dopisywane tylko nowe, oznaczenia nietknięte, zepsuty plik nie jest nadpisywany; kandydaci z obu wyszukiwań; `evaluate.py` pomija nieoznaczone | ✅ `unit/test_feedback.py`, `integration/test_feedback.py` |
 | T35 | Manualny | API + Ollama | `curl -N` na `/api/chat`, przerwanie curla w trakcie, `/api/health`; `evaluation/latency.py` | Tokeny na bieżąco, źródła przed tokenami; w logu serwera „przerwano odpowiedź”; czasy w docs/api.md (3.2) | ✅ (2026-11-04) |
 
 ## 6.3 Instrukcja uruchomienia testów
@@ -895,3 +898,122 @@ rozpoczęły studia od 2019/2020)”) w 3/3 odpowiedzi — wdrożona wersja doty
 fragmentów z dopiskiem daty i każe strony informacyjne przytaczać dokładnie. Odporność na
 prompt injection po zmianie bez zmian: polecenie wprost w treści strony 0/5
 (`python evaluation/injection.py`).
+
+## 6.6 Oceny użytkowników: od 👎 do pytania testowego
+
+Oceny z czatu (`POST /api/feedback`, tabela `feedback`) służą do dwóch rzeczy: pokazują trend
+(raport) i podsuwają pytania, na których bot naprawdę zawodzi (eksport). Ocena **nie jest**
+etykietą: 👎 mówi, że odpowiedź się nie spodobała, a nie która strona była właściwa. Trafne
+strony wskazuje człowiek — według tych samych zasad co przy obecnym zbiorze (6.4).
+
+### Raport
+
+```bash
+python evaluation/feedback_report.py             # tygodnie (UTC)
+python evaluation/feedback_report.py --by day    # dni
+```
+
+```text
+Odsetek 👎 w czasie (UTC, tygodnie)
+
+tydzień od     ocen      👎      % 👎
+2026-11-02        3      2    66.7%
+razem             3      2    66.7%
+
+Najczęstsze tematy pytań z 👎 (pytań z treścią: 2)
+
+    1   50.0%  stypendia i zapomogi
+    1   50.0%  inne
+
+Najczęstsze słowa w temacie „inne”: trzeba (1), wniosek (1), zlozyc (1)
+```
+
+Tematy to słownik `TOPICS` w skrypcie, dopasowywany po początku wyrazu. Pytanie może mieć
+kilka tematów. Słowa z tematu „inne” pokazują, co warto do słownika dopisać. Trend liczony
+jest ze wszystkich ocen, a tematy tylko z tych, którym nie upłynęła retencja treści.
+
+Czytając raport, pamiętaj:
+
+- Oceniają tylko chętni, a konta nie ma — klient może też przysłać dowolną ocenę
+  ([Architektura](architektura.md), 2.4). To wskaźnik zmian, a nie miara jakości.
+- Przy małej liczbie ocen sam odsetek nic nie znaczy, dlatego raport podaje też liczby.
+- Oceny mają `retrieval_mode`, `rerank`, `threshold` i `llm_model` z chwili zapisu. Porównując
+  okresy, sprawdź, czy konfiguracja się w nich nie zmieniła.
+
+### Eksport
+
+```bash
+python evaluation/feedback_export.py                  # z kandydatami; ładuje model embeddingów
+python evaluation/feedback_export.py --no-candidates  # bez modelu i bez kandydatów
+```
+
+Skrypt tworzy `evaluation/feedback_do_oznaczenia.jsonl` (w `.gitignore`) i przy kolejnych
+uruchomieniach **tylko dopisuje** nowe pytania, więc oznaczenia zostają. Pomija pytania obecne
+już w pliku albo w `queries.jsonl` (bez względu na wielkość liter i odstępy) oraz oceny, którym
+upłynęła retencja — eksportuj częściej niż co `FEEDBACK_RETENTION_DAYS` dni. Powtórzenia tego
+samego pytania łączy w jeden wpis (`count`, `comments`), z wyjątkiem dopytań, bo „a telefon?”
+znaczy co innego w każdej rozmowie.
+
+Jedna linia pliku (tu w kilku wierszach):
+
+```json
+{"id": "fb-2", "question": "a do kiedy trzeba zlozyc wniosek?", "relevant": {}, "source": "feedback",
+ "feedback": {"count": 1, "created_at": "2026-11-08T14:49:09+00:00", "followup": true,
+              "answer": "Wniosek o stypendium socjalne należy złożyć…", "comments": [],
+              "sources": [{"url": "https://us.edu.pl/student/…/stypendium-socjalne", "dist": 0.2629}],
+              "config": {"retrieval_mode": "vector", "rerank": false, "threshold": 0.43, "llm_model": "qwen3:8b"},
+              "candidates": [{"url": "https://us.edu.pl/…", "title": "…", "found_by": ["bot", "słowa kluczowe"]}]}}
+```
+
+`candidates` łączy strony ze źródeł bota (`bot`) z 10 najlepszymi stronami wyszukiwania
+wektorowego (`wektorowo`) i 10 po słowach kluczowych (`słowa kluczowe`), niezależnie od
+`RETRIEVAL_MODE`.
+
+`evaluation/` nie wchodzi do obrazu Dockera, a baza produkcyjna nie wystawia portu na
+zewnątrz. We wdrożeniu skrypty można uruchomić w kontenerze API z zamontowanym katalogiem
+(polecenia jeszcze nie sprawdzono na wdrożeniu):
+
+```bash
+docker compose -f compose.prod.yml run --rm -v "$PWD/evaluation:/app/evaluation" api python evaluation/feedback_report.py
+```
+
+### Instrukcja oznaczania
+
+Pracuj w pliku roboczym, wpis po wpisie:
+
+1. **Odrzuć to, co nie jest pytaniem do bota.** Spam, testy, treści obraźliwe, pytania
+   z danymi osobowymi: dopisz `"rejected": true` i zostaw linię w pliku — po jej usunięciu
+   kolejny eksport dodałby wpis ponownie.
+2. **Dopytania przeformułuj.** Przy `"followup": true` samo pytanie zwykle nie ma sensu, a
+   `evaluate.py` szuka bez historii. Na podstawie odpowiedzi zapisz w `question` pytanie
+   samodzielne („Do kiedy trzeba złożyć wniosek o stypendium socjalne?”). Gdy się nie da —
+   odrzuć jak w kroku 1.
+3. **Zbierz kandydatów ze wszystkich źródeł.** Przejrzyj `candidates` i serwis
+   `us.edu.pl/student/`. Nie ograniczaj się do stron oznaczonych `bot`: etykiety nie mogą
+   faworyzować ocenianego retrievera (zasada z 6.4). Komentarz użytkownika to wskazówka, a nie
+   werdykt.
+4. **Oceń strony, czytając ich treść.** W `relevant` wpisz adres z oceną: `2` — strona
+   odpowiada na pytanie, `1` — częściowo albo pomocniczo. Stron nietrafnych nie wpisuj.
+5. **Sprawdź, że strona istnieje.** Otwórz każdy oznaczony adres: musi działać i pokazywać
+   oczekiwaną treść, bez przekierowania w inne miejsce. Martwych adresów nie wpisuj. Strona
+   działająca, ale nieobecna w bazie, zostaje — `evaluate.py` zgłosi ją jako problem crawla.
+6. **Pytanie spoza zakresu oznacz jawnie.** Gdy po przejrzeniu serwisu nic na nie nie
+   odpowiada: zostaw pusty `relevant` i dodaj `"out_of_scope": true`. Sam pusty `relevant`
+   przy `"source": "feedback"` znaczy „jeszcze nieoznaczone” i `evaluate.py` pomija taki wpis.
+7. **Przenieś gotowe wpisy do `queries.jsonl`.** Dopisz tylko pola `id`, `question`,
+   `relevant`, `source` (i ewentualnie `out_of_scope`) — **bez** pola `feedback`, które zawiera
+   odpowiedzi i komentarze. Plik jest w repozytorium, więc przedtem przeczytaj pytanie i usuń
+   z niego wszystko, co mogłoby wskazać konkretną osobę.
+8. **Zmierz i opisz.** Uruchom `python evaluation/evaluate.py` i zanotuj w 6.4 liczbę pytań.
+   Pytania z 👎 są z definicji trudniejsze od pozostałych, więc wyniki spadną — nie porównuj
+   ich z wcześniejszymi pomiarami bez przeliczenia starego stanu na nowym zbiorze.
+9. **Usuń plik roboczy** po skończeniu partii: ma te same treści co tabela `feedback`, a nie
+   obejmuje go automatyczna retencja. Odrzucone wpisy wrócą wtedy przy eksporcie tylko wtedy,
+   gdy ich treść jest jeszcze w bazie.
+
+**Weryfikacja 2026-11-08** (baza deweloperska, 42 330 fragmentów, `qwen3:8b` na Ollamie, bge-m3):
+trzy odpowiedzi ocenione w przeglądarce (👎 z komentarzem zawierającym e-mail, 👎 przy dopytaniu,
+👍) trafiły do tabeli utworzonej przez API w istniejącej bazie. Komentarz zapisał się z
+`[usunięto]` zamiast adresu, a konfiguracja zgadzała się z `.env`. Eksport pominął pytanie
+obecne już w `queries.jsonl`, dla dopytania dał wpis z 23 kandydatami, a drugi uruchomiony
+nic nie dopisał. Wiersze testowe usunięto.
