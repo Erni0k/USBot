@@ -61,7 +61,8 @@ def build_resources(settings: Settings) -> Resources:
     service = ChatService(retriever, llm, top_k=settings.top_k,
                           max_distance=settings.max_distance,
                           min_rerank_score=settings.min_rerank_score,
-                          max_history_turns=settings.api_history_turns)
+                          max_history_turns=settings.api_history_turns,
+                          clarify_details=settings.clarify_details)
 
     timeout = settings.health_timeout
     checks: dict[str, HealthCheck] = {

@@ -14,8 +14,20 @@ FOOTER_HEADING = "Źródła:"
 _CITATION = re.compile(r"\[\s*(\d{1,2}(?:\s*,\s*\d{1,2})*)\s*\]")
 # Otwarty nawias na końcu kawałka tekstu: może to być początek numeru, poczekaj na resztę
 _OPEN_CITATION = re.compile(r"\[[\d\s,]*$")
-_FOOTER = re.compile(rf"\n*{FOOTER_HEADING}\n(?:\[\d+\] \S+\n?)+\s*$")
+_FOOTER = re.compile(rf"\n*{FOOTER_HEADING}\n(?:\[\d+\] [^\n]+\n?)+\s*$")
 _ANY_CITATION = re.compile(r" ?\[\d{1,2}(?:, ?\d{1,2})*\]")
+
+
+FAQ_SCHEME = "faq://"
+FAQ_LABEL = "FAQ (wpis sprawdzony ręcznie)"
+
+
+def source_label(url: str) -> str:
+    """Tekst źródła w stopce: adres strony albo oznaczenie wpisu FAQ (`faq://f01#<strona>`)."""
+    if not url.startswith(FAQ_SCHEME):
+        return url
+    page = url.partition("#")[2]
+    return f"{FAQ_LABEL}: {page}" if page else FAQ_LABEL
 
 
 def source_numbers(chunks: Sequence[Chunk]) -> dict[str, int]:
@@ -59,7 +71,7 @@ class CitationFilter:
 def sources_footer(cited: Sequence[int], numbers: dict[str, int]) -> str:
     """Lista cytowanych stron dopisywana po odpowiedzi; pusta, gdy model nic nie zacytował."""
     urls = {n: url for url, n in numbers.items()}
-    lines = [f"[{n}] {urls[n]}" for n in sorted(cited)]
+    lines = [f"[{n}] {source_label(urls[n])}" for n in sorted(cited)]
     return f"\n\n{FOOTER_HEADING}\n" + "\n".join(lines) if lines else ""
 
 

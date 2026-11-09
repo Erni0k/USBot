@@ -379,6 +379,13 @@ nie trafiają do `os.environ` — zmienne bibliotek (np. `HF_HOME`) ustaw w śro
 | `OLD_NEWS_PENALTY` | kara dodawana do odległości (tylko przy sortowaniu) dla aktualności i wydarzeń starszych niż `OLD_NEWS_DAYS`; `0` = wyłączone | `0` |
 | `OLD_NEWS_DAYS` | od ilu dni aktualność/wydarzenie jest „stare" | `730` |
 | `MAX_PER_URL` | najwyżej tyle fragmentów z jednej strony w wynikach wyszukiwania; `0` = bez limitu | `2` |
+| `OUTDATED_FILTER` | przy pytaniach o bieżące zasady pomija treści przestarzałe: `off`, `covid` (strony o pandemii), `all` (także aktualności starsze niż `OLD_NEWS_DAYS`); pytania o przeszłość widzą wszystko (`docs/testy.md`, 6.10) | `covid` |
+| `AUDIENCE_FILTER` | strony dla kandydatów (`rekrutacja.us.edu.pl` i podobne) tylko przy pytaniach o rekrutację | `true` |
+| `FAQ_ENABLED` | ręcznie sprawdzone odpowiedzi z `knowledge/faq.jsonl` (typ `faq`) w wynikach wyszukiwania | `true` |
+| `CLARIFY_DETAILS` | dopytywanie bez LLM-a o przedmiot (nieobecności, brak oceny) albo system (konto) | `true` |
+| `NEIGHBOR_PAGES` | dla tylu najlepszych stron dokłada sąsiednie fragmenty tej samej sekcji; `0` = wyłączone (pomiar bez poprawy, 6.10) | `0` |
+| `NEIGHBOR_PER_SIDE` | ile sąsiednich fragmentów z każdej strony znalezionego | `1` |
+| `NEIGHBOR_MAX_TOKENS` | limit szacowanej długości fragmentów w kontekście przy dokładaniu sąsiadów; zostawia miejsce na odpowiedź w limicie 4096 tokenów Ollamy | `2100` |
 | `RETRIEVAL_MODE` | `vector` — samo wyszukiwanie wektorowe; `hybrid` — wektorowe + pełnotekstowe (`chunks.content_tsv`) połączone przez RRF; porównanie w `docs/testy.md` (6.4) | `vector` |
 | `RERANK` | `true` = 20 najlepszych fragmentów ocenia cross-encoder i zostaje `TOP_K`; wymaga GPU (na CPU ~6 s na pytanie) | `false` |
 | `RERANK_OLD_NEWS_FACTOR` | przy `RERANK=true` mnożnik wyniku starych aktualności; 1 = wyłączone | `1.0` |

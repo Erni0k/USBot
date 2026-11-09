@@ -55,7 +55,7 @@ export function TurnView({ turn, isLast, busy, retryBlocked, onChooseFaculty, on
         {turn.status === "clarify" && turn.clarify && (
           <div className="answer clarify">
             <p>{clarifyLead(turn.clarify.message)}</p>
-            <div className="faculty-grid" role="group" aria-label="Wybierz wydział">
+            <div className="faculty-grid" role="group" aria-label="Wybierz odpowiedź">
               {turn.clarify.options.map((f) => (
                 <button
                   key={f.code}
@@ -65,7 +65,7 @@ export function TurnView({ turn, isLast, busy, retryBlocked, onChooseFaculty, on
                   onClick={() => onChooseFaculty(f)}
                 >
                   <span className="faculty-name">{f.name}</span>
-                  <span className="faculty-code">{f.code}</span>
+                  {f.code !== f.name && <span className="faculty-code">{f.code}</span>}
                 </button>
               ))}
             </div>

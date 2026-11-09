@@ -43,17 +43,31 @@ Użytkownik (terminal)                       Przeglądarka (strona WWW)
                          chunking po nagłówkach + prefiks tytułu/sekcji
                          pomijanie boilerplate'u (ta sama treść na >20 stronach)
                          Embedder.embed_batch (cache po content_hash) ──► UPSERT chunks + pages
+ ingestion/ingest_faq.py ──► knowledge/faq.jsonl ──► chunks (page_type = faq, url faq://<id>#<strona>)
  evaluation/evaluate.py ──► build_retriever() ──► Retriever.search() bez progu ──► metryki
 ```
+
+**FAQ.** `knowledge/faq.jsonl` to ręcznie sprawdzone odpowiedzi na pytania, na które strony
+uczelni nie odpowiadają wprost (pola `id`, `questions`, `answer`, `source`, `origin`). Każde
+sformułowanie pytania to osobny fragment z tą samą odpowiedzią i tym samym `body_hash`, więc
+`select()` zostawia jeden. W kontekście wpis ma nagłówek „wpis FAQ sprawdzony ręcznie”, a w
+stopce odpowiedzi „FAQ (wpis sprawdzony ręcznie): <strona źródłowa>”, więc numerowane
+cytowanie działa jak przy stronach. Źródłem wpisu może być tylko strona uczelni albo część
+`tuning` z `evaluation/golden_80.jsonl`; nigdy `test` ani `evaluation/holdout.jsonl`.
 
 **Przepływ przy każdym pytaniu:** pytanie (wraz z kontekstem kilku poprzednich tur)
 jest embeddowane lokalnie → zapytanie wektorowe do PostgreSQL zwraca kandydatów (w trybie
 `hybrid` także zapytanie pełnotekstowe; obie listy łączy RRF, a każdy kandydat ma
 odległość wektorową) →
+reguły z `usbot/core/scope.py` pomijają strony o pandemii przy pytaniach o bieżące zasady
+(`OUTDATED_FILTER`) i strony dla kandydatów przy pytaniach, które nie dotyczą rekrutacji
+(`AUDIENCE_FILTER`) →
 `select()` wybiera `TOP_K`: ta sama treść tylko raz, najwyżej `MAX_PER_URL` fragmentów
 z jednej strony (z `RERANK=true`: 20 kandydatów ocenia cross-encoder i zostaje `TOP_K`
 najlepszych) → fragmenty dalsze niż `MAX_DISTANCE` (z rerankingiem: z wynikiem poniżej
-`MIN_RERANK_SCORE`) są odrzucane → przy pytaniu o dziekanat bez wydziału bot dopytuje →
+`MIN_RERANK_SCORE`) są odrzucane → przy pytaniu o dziekanat bez wydziału bot dopytuje,
+a przy pytaniu bez przedmiotu lub systemu (`usbot/core/clarify.py`) jeszcze przed
+wyszukiwaniem →
 kontekst (z datą publikacji przy komunikatach i wydarzeniach) wbudowywany jest w system
 prompt razem z dzisiejszą datą → model LLM generuje odpowiedź strumieniowo.
 
@@ -90,7 +104,7 @@ klient. Każde zdarzenie to słownik gotowy do serializacji JSON:
 | `sources` | fragmenty przeszły próg, zaraz zostanie wywołany LLM | `sources`: strony z wyników wyszukiwania (każdy URL raz, z najlepszego fragmentu): `url`, `title`, `page_type`, `published_at`, `dist`, `rerank` |
 | `token` | kolejny kawałek odpowiedzi LLM-a | `text` |
 | `refused` | żaden fragment nie przeszedł progu — bez wywołania LLM-a | `message` (stały tekst „Nie mam tej informacji…”) |
-| `clarify` | pytanie o dziekanat, a w 3 ostatnich pytaniach nie padł wydział — bez wywołania LLM-a | `message`, `options`: `[{"code": "WNP", "name": "Wydział Nauk Przyrodniczych"}, …]` |
+| `clarify` | pytanie o dziekanat, a w 3 ostatnich pytaniach nie padł wydział; przy `CLARIFY_DETAILS=true` także pytanie o nieobecności lub brak oceny bez przedmiotu albo o konto bez systemu — bez wywołania LLM-a | `message`, `options`: `[{"code": "WNP", "name": "Wydział Nauk Przyrodniczych"}, …]` (przy przedmiocie pusta lista) |
 | `done` | zawsze na końcu | `answer`: pełny tekst odpowiedzi, który klient dopisuje do historii |
 
 Źródła są danymi z retrievalu, a nie tekstem wygenerowanym przez LLM — interfejs może

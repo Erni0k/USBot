@@ -5,7 +5,7 @@ Odpowiedź to strumień zdarzeń (słowników gotowych do JSON-a, np. dla SSE/We
     {"type": "sources", "sources": [...]}            fragmenty przeszły próg; zaraz LLM
     {"type": "token", "text": "..."}                 kolejny kawałek odpowiedzi LLM-a
     {"type": "refused", "message": NO_INFO}          nic nie przeszło progu, bez LLM-a
-    {"type": "clarify", "message": ..., "options": [...]}  dziekanat bez wydziału, bez LLM-a
+    {"type": "clarify", "message": ..., "options": [...]}  brak wydziału lub szczegółu, bez LLM-a
     {"type": "done", "answer": "..."}                zawsze na końcu: pełny tekst odpowiedzi
 
 `done.answer` to tekst, który klient dopisuje do historii jako wiadomość asystenta
@@ -18,6 +18,7 @@ from datetime import date
 from typing import Literal, TypedDict
 
 from usbot.core.citations import CitationFilter, source_numbers, sources_footer, without_citations
+from usbot.core.clarify import needs_detail
 from usbot.core.faculties import CLARIFY_MESSAGE, expand_faculties, faculty_options, needs_faculty
 from usbot.core.models import Chunk, Message
 from usbot.core.prompts import NO_INFO, build_system_prompt, recent_turns, search_queries
@@ -103,7 +104,7 @@ class ChatService:
 
     def __init__(self, retriever: Retriever, llm: ChatLLM, *, top_k: int,
                  max_distance: float | None, min_rerank_score: float | None,
-                 max_history_turns: int | None = None,
+                 max_history_turns: int | None = None, clarify_details: bool = False,
                  today: Callable[[], date] = date.today) -> None:
         self.retriever = retriever
         self.llm = llm
@@ -112,6 +113,8 @@ class ChatService:
         self.min_rerank_score = min_rerank_score
         # None = cała historia (cli.py); API przycina do API_HISTORY_TURNS tur
         self.max_history_turns = max_history_turns
+        # Dopytywanie o przedmiot albo system (usbot/core/clarify.py)
+        self.clarify_details = clarify_details
         # Dzisiejsza data do promptu (aktualność komunikatów); w testach — stała data
         self.today = today
 
@@ -136,6 +139,10 @@ class ChatService:
         """
         history = recent_turns(history, self.max_history_turns)
         messages: list[Message] = [*history, {"role": "user", "content": question}]
+        if self.clarify_details and (detail := needs_detail(messages)):
+            yield {"type": "clarify", "message": detail.message, "options": detail.options}
+            yield {"type": "done", "answer": detail.message}
+            return
         chunks = self.retrieve(messages)
         if not chunks:
             # Nic w bazie nie jest dość bliskie — LLM dostałby same śmieci i zmyślał

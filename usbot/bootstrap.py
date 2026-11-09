@@ -6,7 +6,7 @@ Z tych samych funkcji korzystają cli.py, evaluation/evaluate.py i ingestion/ing
 """
 from usbot.config import Settings
 from usbot.core.chat import ChatService
-from usbot.core.ranking import RerankingRetriever
+from usbot.core.ranking import NeighborRetriever, RerankingRetriever
 from usbot.ports import Embedder, Retriever
 
 EMBED_LOAD_MESSAGE = "Ładowanie modelu embeddingów (pierwsze uruchomienie może chwilę potrwać)..."
@@ -26,15 +26,24 @@ def build_retriever_parts(settings: Settings, embedder: Embedder | None = None, 
     pg = PgvectorRetriever(
         settings.database_url, embedder or build_embedder(settings),
         mode=settings.retrieval_mode, old_news_penalty=settings.old_news_penalty,
-        old_news_days=settings.old_news_days, max_per_url=settings.max_per_url, pool=pool,
+        old_news_days=settings.old_news_days, max_per_url=settings.max_per_url,
+        outdated_filter=settings.outdated_filter, audience_filter=settings.audience_filter,
+        faq_enabled=settings.faq_enabled, pool=pool,
     )
+    def expanded(retriever: Retriever) -> Retriever:
+        if not settings.neighbor_pages:
+            return retriever
+        return NeighborRetriever(retriever, pg.chunks_by_ids, pages=settings.neighbor_pages,
+                                 per_side=settings.neighbor_per_side,
+                                 max_tokens=settings.neighbor_max_tokens)
+
     if not settings.rerank:
-        return pg, pg, None
+        return expanded(pg), pg, None
     from usbot.adapters.reranker import CrossEncoderReranker
     reranker = CrossEncoderReranker(settings.rerank_model, rerank_load_message)
     retriever = RerankingRetriever(pg, reranker, old_news_factor=settings.rerank_old_news_factor,
                                    old_news_days=settings.old_news_days)
-    return retriever, pg, reranker
+    return expanded(retriever), pg, reranker
 
 
 def build_retriever(settings: Settings, embedder: Embedder | None = None) -> Retriever:
@@ -54,4 +63,5 @@ def build_llm(settings: Settings, *, max_retries: int = 2):
 def build_chat_service(settings: Settings) -> ChatService:
     return ChatService(build_retriever(settings), build_llm(settings),
                        top_k=settings.top_k, max_distance=settings.max_distance,
-                       min_rerank_score=settings.min_rerank_score)
+                       min_rerank_score=settings.min_rerank_score,
+                       clarify_details=settings.clarify_details)

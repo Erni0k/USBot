@@ -72,6 +72,21 @@ class Settings(BaseSettings):
     old_news_days: int = 730
     # Najwyżej tyle fragmentów z jednej strony (URL-a) w wynikach; 0 = bez limitu.
     max_per_url: int = 2
+    # Przy pytaniach o bieżące zasady: off, covid (bez stron o pandemii) albo all (także bez
+    # aktualności starszych niż OLD_NEWS_DAYS). Pomiar: docs/testy.md (6.10).
+    outdated_filter: Annotated[Literal["off", "covid", "all"], BeforeValidator(_lower)] = "covid"
+    # Strony dla kandydatów tylko przy pytaniach o rekrutację (usbot/core/scope.py).
+    audience_filter: EnvBool = True
+    # Sąsiednie fragmenty tej samej sekcji dla NEIGHBOR_PAGES najlepszych stron; 0 = wyłączone.
+    neighbor_pages: int = Field(0, ge=0)
+    neighbor_per_side: int = Field(1, ge=1)
+    # Limit szacowanej długości fragmentów w kontekście przy dokładaniu sąsiadów (tokeny);
+    # musi zostawić miejsce na resztę promptu i odpowiedź w limicie 4096 tokenów Ollamy.
+    neighbor_max_tokens: int = Field(2100, ge=0)
+    # Ręcznie sprawdzone odpowiedzi (knowledge/faq.jsonl, typ strony `faq`) w wynikach.
+    faq_enabled: EnvBool = True
+    # Dopytywanie o przedmiot albo system, bez LLM-a (usbot/core/clarify.py).
+    clarify_details: EnvBool = True
     # vector = samo wyszukiwanie wektorowe; hybrid = wektorowe + pełnotekstowe (RRF).
     retrieval_mode: Annotated[Literal["vector", "hybrid"], BeforeValidator(_lower)] = "vector"
     # Reranking: RERANK_CANDIDATES najlepszych fragmentów ocenia cross-encoder i zostaje TOP_K.

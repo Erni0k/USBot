@@ -21,6 +21,7 @@ import psycopg
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 
+import ingest_faq
 import scrape
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -174,7 +175,7 @@ def _load_cache(conn: psycopg.Connection) -> dict[str, dict]:
 def _purge_excluded(conn: psycopg.Connection) -> int:
     """Usuwa z bazy strony, ktore obecne reguly crawlera wykluczaja (np. galerie)."""
     urls = [r[0] for r in conn.execute("SELECT url FROM pages UNION SELECT url FROM chunks")]
-    bad = [u for u in urls if scrape.excluded(u)]
+    bad = [u for u in urls if scrape.excluded(u) and not u.startswith(ingest_faq.FAQ_SCHEME)]
     if bad:
         conn.execute("DELETE FROM chunks WHERE url = ANY(%s)", (bad,))
         conn.execute("DELETE FROM pages WHERE url = ANY(%s)", (bad,))
@@ -409,6 +410,8 @@ def run() -> None:
 
         if pending:
             flush()
+
+        print(f"Wpisy FAQ: {ingest_faq.load_faq(conn, embedder)}")
 
     print(f"Gotowe. Nowych/zmienionych: {n_new}, bez zmian: {n_same}. Fragmenty: "
           f"{stats[0]} embeddingow policzonych, {stats[1]} z cache'u, "

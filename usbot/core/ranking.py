@@ -11,6 +11,7 @@ from dataclasses import replace
 from datetime import date
 
 from usbot.core.models import Chunk
+from usbot.core.scope import is_old_news
 from usbot.ports import Reranker, Retriever
 
 RRF_K = 60  # stała w RRF: score = Σ 1/(RRF_K + pozycja)
@@ -120,6 +121,78 @@ def rerank(reranker: Reranker, queries: Sequence[str], chunks: list[Chunk]) -> l
     return sorted(chunks, key=lambda c: (-c.rerank, *rank_key(c)))
 
 
+def section(chunk: Chunk) -> str:
+    """Prefiks fragmentu „<tytuł strony> > <nagłówek sekcji>” (pierwsza linia treści)."""
+    return chunk.content.partition("\n")[0]
+
+
+def estimated_tokens(text: str) -> float:
+    """Przybliżona liczba tokenów `text` w qwen3:8b, bez wywoływania modelu.
+
+    Współczynniki dopasowane do `prompt_eval_count` z Ollamy (docs/testy.md, 6.10). Liczba
+    znaków nie wystarcza: cyfry kosztują kilka razy więcej niż litery, więc kontekst tej
+    samej długości różni się o setki tokenów.
+    """
+    digits = sum(ch.isdigit() for ch in text)
+    letters = sum(ch.isalpha() for ch in text)
+    spaces = sum(ch.isspace() for ch in text)
+    return 0.27 * letters + 1.43 * digits + 0.53 * spaces + 0.66 * (len(text) - digits - letters - spaces)
+
+
+def with_neighbors(chunks: Sequence[Chunk], fetch: Callable[[list[int]], Sequence[Chunk]],
+                   pages: int, per_side: int, max_tokens: float) -> list[Chunk]:
+    """Dokłada sąsiednie fragmenty tej samej sekcji dla `pages` najlepszych stron.
+
+    Fragmenty mają 800 znaków, a zasada i jej wyjątek bywają w dwóch kolejnych. Sąsiad
+    dziedziczy wynik fragmentu, przy którym stoi, i trafia obok niego w kolejności z
+    dokumentu. `max_tokens` ogranicza szacowaną długość fragmentów w kontekście: Ollama ma
+    4096 tokenów na prompt i odpowiedź, a sąsiedzi nie mogą wypchnąć początku promptu.
+    """
+    best = list(dict.fromkeys(c.url for c in chunks))[:pages]
+    have = {c.id for c in chunks}
+    wanted = sorted({c.id + d for c in chunks if c.url in best
+                     for d in range(-per_side, per_side + 1) if d} - have)
+    found = {n.id: n for n in fetch(wanted)} if wanted else {}
+    total = sum(estimated_tokens(c.content) for c in chunks)
+    seen = {c.body_hash or c.content for c in chunks}
+    out: list[Chunk] = []
+    for c in chunks:
+        before: list[Chunk] = []
+        after: list[Chunk] = []
+        if c.url in best:
+            for distance in range(1, per_side + 1):
+                for sign, side in ((-1, before), (1, after)):
+                    n = found.get(c.id + sign * distance)
+                    key = n and (n.body_hash or n.content)
+                    if n is None or n.url != c.url or section(n) != section(c) or key in seen or n.id in have:
+                        continue
+                    cost = estimated_tokens(n.content)
+                    if total + cost > max_tokens:
+                        continue
+                    seen.add(key)
+                    have.add(n.id)
+                    total += cost
+                    side.append(replace(n, dist=c.dist, score=c.score, rerank=c.rerank))
+        out += sorted(before, key=lambda n: n.id) + [c] + sorted(after, key=lambda n: n.id)
+    return out
+
+
+class NeighborRetriever:
+    """Retriever dokładający sąsiednie fragmenty tej samej sekcji (with_neighbors())."""
+
+    def __init__(self, inner: Retriever, fetch: Callable[[list[int]], Sequence[Chunk]], *,
+                 pages: int, per_side: int, max_tokens: float) -> None:
+        self.inner = inner
+        self.fetch = fetch
+        self.pages = pages
+        self.per_side = per_side
+        self.max_tokens = max_tokens
+
+    def search(self, queries: Sequence[str], k: int) -> list[Chunk]:
+        return with_neighbors(self.inner.search(queries, k), self.fetch, self.pages,
+                              self.per_side, self.max_tokens)
+
+
 class RerankingRetriever:
     """Retriever z rerankingiem: RERANK_CANDIDATES najlepszych z `inner` ocenia `reranker`.
 
@@ -140,15 +213,11 @@ class RerankingRetriever:
         self.old_news_days = old_news_days
         self.today = today
 
-    def _is_old_news(self, c: Chunk) -> bool:
-        return (c.page_type in ("news", "event") and c.published_at is not None
-                and (self.today() - c.published_at.date()).days > self.old_news_days)
-
     def search(self, queries: Sequence[str], k: int) -> list[Chunk]:
         chunks = rerank(self.reranker, queries, self.inner.search(queries, max(k, self.candidates)))
         if self.old_news_factor != 1.0:
             for c in chunks:
-                if self._is_old_news(c):
+                if is_old_news(c, self.today(), self.old_news_days):
                     c.rerank *= self.old_news_factor
             chunks.sort(key=lambda c: (-c.rerank, *rank_key(c)))
         return chunks[:k]

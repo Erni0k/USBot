@@ -75,6 +75,8 @@ _DATED_TYPES = {"news": "komunikat", "event": "wydarzenie"}
 
 
 def _header(c: Chunk, number: int) -> str:
+    if c.page_type == "faq":
+        return f"[Źródło {number} | wpis FAQ sprawdzony ręcznie]"
     label = _DATED_TYPES.get(c.page_type or "")
     dated = f" | {label} z {c.published_at.date().isoformat()}" if label and c.published_at else ""
     return f"[Źródło {number}{dated}]"

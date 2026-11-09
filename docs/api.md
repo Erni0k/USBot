@@ -89,7 +89,7 @@ data: {"type":"done","answer":"Aby połączyć się z siecią eduroam…"}
 | `sources` | fragmenty przeszły próg; zaraz popłyną tokeny | `sources`: lista stron (każda raz, w kolejności wyników) — `url`, `title`, `page_type`, `published_at` (ISO 8601 albo `null`), `dist` (odległość kosinusowa), `rerank` (wynik rerankera albo `null`) |
 | `token` | kolejny kawałek odpowiedzi LLM-a | `text` |
 | `refused` | nic nie przeszło progu — bez wywołania LLM-a | `message` (stały tekst „Nie mam tej informacji…”) |
-| `clarify` | pytanie o dziekanat bez wydziału — bez wywołania LLM-a | `message` (pytanie z listą wydziałów), `options`: `[{"code", "name"}]` jak w `/api/faculties` |
+| `clarify` | pytanie o dziekanat bez wydziału, a przy `CLARIFY_DETAILS=true` także o nieobecności lub brak oceny bez przedmiotu i o niedziałające konto bez systemu — bez wywołania LLM-a | `message` (pytanie dopytujące), `options`: `[{"code", "name"}]` — przy wydziałach jak w `/api/faculties`, przy systemie lista systemów (`code` = `name`), przy przedmiocie pusta (odpowiedź tekstem) |
 | `done` | koniec odpowiedzi | `answer`: pełny tekst (sklejone tokeny albo `message` z `refused`/`clarify`) |
 | `error` | błąd w trakcie (baza, LLM, timeout) | `code`, `message` (dla użytkownika; szczegóły tylko w logu serwera) |
 
@@ -479,6 +479,13 @@ wcześniejsze kopie są usuwane w tej samej transakcji (opis reguły w README).
 | `OLD_NEWS_PENALTY` | `0` | Kara do odległości (tylko przy sortowaniu) dla `news`/`event` starszych niż `OLD_NEWS_DAYS`; `0` = wyłączone |
 | `OLD_NEWS_DAYS` | `730` | Od ilu dni aktualność/wydarzenie jest „stare" |
 | `MAX_PER_URL` | `2` | Najwyżej tyle fragmentów z jednej strony w wynikach; `0` = bez limitu |
+| `OUTDATED_FILTER` | `covid` | `off`, `covid` albo `all`: przy pytaniach o bieżące zasady bez stron o pandemii (`all`: także bez starych aktualności); pytania o przeszłość bez filtra (`usbot/core/scope.py`) |
+| `AUDIENCE_FILTER` | `true` | Strony dla kandydatów tylko przy pytaniach o rekrutację |
+| `FAQ_ENABLED` | `true` | Wpisy z `knowledge/faq.jsonl` (`page_type` = `faq`, adres `faq://<id>#<strona>`) w wynikach |
+| `CLARIFY_DETAILS` | `true` | Zdarzenie `clarify` także przy pytaniach bez przedmiotu lub systemu (`usbot/core/clarify.py`) |
+| `NEIGHBOR_PAGES` | `0` | Sąsiednie fragmenty tej samej sekcji dla tylu najlepszych stron; `0` = wyłączone |
+| `NEIGHBOR_PER_SIDE` | `1` | Ile sąsiadów z każdej strony fragmentu |
+| `NEIGHBOR_MAX_TOKENS` | `2100` | Limit szacowanej długości fragmentów (tokeny qwen3) przy dokładaniu sąsiadów |
 | `RETRIEVAL_MODE` | `vector` | `vector` albo `hybrid` (wektorowe + pełnotekstowe, RRF) |
 | `RERANK` | `false` | `true` = reranking 20 kandydatów cross-encoderem, zostaje `TOP_K`; wymaga GPU |
 | `RERANK_OLD_NEWS_FACTOR` | `1.0` | Przy `RERANK=true` mnożnik wyniku aktualności starszych niż `OLD_NEWS_DAYS`; 1 = wyłączone |

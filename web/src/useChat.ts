@@ -76,7 +76,7 @@ export function useChat() {
               clarify: { message: ev.message, options: ev.options ?? [] },
             }));
             announcer.say(`${ev.message} Wybierz wydział jednym z przycisków pod pytaniem.`);
-            if (!ev.options?.length)
+            if (ev.options === undefined)
               getFaculties()
                 .then((options) => update(id, (t) => (t.clarify ? { ...t, clarify: { ...t.clarify, options } } : t)))
                 .catch(() => undefined); // bez przycisków użytkownik może wpisać skrót wydziału

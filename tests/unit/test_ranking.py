@@ -2,8 +2,9 @@
 import pytest
 
 from tests.fakes import FakeReranker, FakeRetriever, chunk
-from usbot.core.ranking import (RERANK_CANDIDATES, RRF_K, RerankingRetriever, merge_best,
-                                rank_key, rerank, rrf, select)
+from usbot.core.ranking import (RERANK_CANDIDATES, RRF_K, NeighborRetriever, RerankingRetriever,
+                                estimated_tokens, merge_best, rank_key, rerank, rrf, select,
+                                with_neighbors)
 
 
 def test_select_duplikaty_tresci_i_limit_na_strone():
@@ -74,3 +75,74 @@ def test_reranking_retriever_kandydaci_i_top_k():
     assert inner.calls == [(["q"], RERANK_CANDIDATES)]
     assert len(reranker.calls[0][1]) == RERANK_CANDIDATES
     assert [c.content for c in out] == ["t19", "t5", "t0"]  # remis 0 → dotychczasowa kolejność
+
+
+# --- sąsiednie fragmenty (with_neighbors, NeighborRetriever) ---
+
+PAGE = "https://us.edu.pl/regulamin/"
+OTHER = "https://us.edu.pl/inna/"
+
+
+def _c(id, url=PAGE, section="Regulamin > Oceny", body="treść", **kw):
+    return chunk(id, url, content=f"{section}\n{body} {id}", **kw)
+
+
+def _fetcher(*chunks):
+    by_id = {c.id: c for c in chunks}
+    return lambda ids: [by_id[i] for i in ids if i in by_id]
+
+
+def _neighbors(found, *others, pages=1, per_side=1, max_tokens=5000):
+    return with_neighbors(found, _fetcher(*others), pages, per_side, max_tokens)
+
+
+def test_sasiedzi_w_kolejnosci_z_dokumentu_i_z_wynikiem_fragmentu():
+    out = _neighbors([_c(5, dist=0.2, score=0.2)], _c(4), _c(6))
+    assert [c.id for c in out] == [4, 5, 6]
+    assert all(c.dist == 0.2 and c.score == 0.2 for c in out)
+
+
+def test_sasiad_z_innej_sekcji_albo_strony_jest_pomijany():
+    out = _neighbors([_c(5)], _c(4, section="Regulamin > Skreślenie"), _c(6, url=OTHER))
+    assert [c.id for c in out] == [5]
+
+
+def test_sasiedzi_tylko_dla_najlepszych_stron():
+    out = _neighbors([_c(5), _c(50, OTHER)], _c(6), _c(51, OTHER))
+    assert [c.id for c in out] == [5, 6, 50]
+
+
+def test_znaleziony_fragment_nie_jest_powtarzany():
+    out = _neighbors([_c(5), _c(6)], _c(4), _c(5), _c(6), _c(7))
+    assert [c.id for c in out] == [4, 5, 6, 7]
+
+
+def test_sasiad_o_powtorzonej_tresci_jest_pomijany():
+    assert [c.id for c in _neighbors([_c(5, body_hash="x")], _c(6, body_hash="x"))] == [5]
+
+
+def test_limit_tokenow_nie_jest_przekraczany():
+    found = _c(5)
+    limit = estimated_tokens(found.content) + estimated_tokens(_c(4).content)
+    out = _neighbors([found], _c(4), _c(6), max_tokens=limit)
+    assert [c.id for c in out] == [4, 5]
+    assert sum(estimated_tokens(c.content) for c in out) <= limit
+
+
+def test_szacunek_tokenow_cyfry_drozsze_od_liter():
+    assert estimated_tokens("1234567890") > 3 * estimated_tokens("abcdefghij")
+
+
+def test_kontekst_ponad_limitem_zostaje_bez_sasiadow():
+    assert [c.id for c in _neighbors([_c(5)], _c(4), max_tokens=1)] == [5]
+
+
+def test_dwa_fragmenty_z_kazdej_strony():
+    out = _neighbors([_c(5)], _c(3), _c(4), _c(6), _c(7), per_side=2)
+    assert [c.id for c in out] == [3, 4, 5, 6, 7]
+
+
+def test_retriever_z_sasiadami_przekazuje_zapytanie_i_dokłada_fragmenty():
+    inner = FakeRetriever([_c(5)])
+    retriever = NeighborRetriever(inner, _fetcher(_c(6)), pages=1, per_side=1, max_tokens=5000)
+    assert [c.id for c in retriever.search(["pytanie"], 3)] == [5, 6]

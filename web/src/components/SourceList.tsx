@@ -17,10 +17,14 @@ export function SourceList({ sources, id }: { sources: Source[]; id: string }) {
       <ul className="source-list">
         {sources.map((s) => (
           <li key={s.url} className="source-card">
-            <a href={s.url} target="_blank" rel="noopener noreferrer" className="source-link">
+            {sourceHref(s.url) ? (
+              <a href={sourceHref(s.url)} target="_blank" rel="noopener noreferrer" className="source-link">
+                <span className="source-name">{s.title?.trim() || s.url}</span>
+                <span className="sr-only"> (otwiera się w nowej karcie)</span>
+              </a>
+            ) : (
               <span className="source-name">{s.title?.trim() || s.url}</span>
-              <span className="sr-only"> (otwiera się w nowej karcie)</span>
-            </a>
+            )}
             <span className="source-meta">
               <span className="source-host">{shortUrl(s.url)}</span>
               {PAGE_TYPES[s.page_type] && <span className="source-tag">{PAGE_TYPES[s.page_type]}</span>}
@@ -35,7 +39,14 @@ export function SourceList({ sources, id }: { sources: Source[]; id: string }) {
   );
 }
 
+/** Wpis FAQ ma adres `faq://f01#<strona>`: link prowadzi do strony źródłowej, jeśli jest. */
+function sourceHref(url: string): string | undefined {
+  if (!url.startsWith("faq://")) return url;
+  return url.split("#")[1] || undefined;
+}
+
 function shortUrl(url: string): string {
+  if (url.startsWith("faq://")) return "FAQ, wpis sprawdzony ręcznie";
   try {
     const u = new URL(url);
     const path = decodeURIComponent(u.pathname).replace(/\/$/, "");

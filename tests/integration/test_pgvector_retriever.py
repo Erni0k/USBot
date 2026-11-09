@@ -12,6 +12,7 @@ from tests.integration.conftest import (DZIEKANAT, EDUROAM, EDUROAM_URL, ELS_URL
 from usbot.adapters.pgvector import PgvectorRetriever, connect, fulltext_query
 from usbot.core.chat import ChatService
 from usbot.core.prompts import NO_INFO
+from usbot.core.ranking import with_neighbors
 
 pytestmark = pytest.mark.integration
 
@@ -158,3 +159,16 @@ def test_ping_i_statement_timeout(database_url):
         with pool.connection() as conn, pytest.raises(psycopg.errors.QueryCanceled):
             conn.execute("SELECT pg_sleep(5)")  # statement_timeout = 1 s z create_pool()
 
+
+
+def test_sasiednie_fragmenty_z_bazy(retriever):
+    # T53: chunks_by_ids zwraca fragmenty z liczbowym dist, a with_neighbors dokłada
+    # następny fragment tej samej strony i sekcji z wynikiem znalezionego
+    r = retriever(max_per_url=1)
+    found = r.search([Q_DZIEKANAT], 1)
+    assert [c.url for c in found] == [WNP]
+    fetched = r.chunks_by_ids([found[0].id + 1])
+    assert [c.url for c in fetched] == [WNP] and isinstance(fetched[0].score, float)
+    out = with_neighbors(found, r.chunks_by_ids, pages=1, per_side=1, max_tokens=5000)
+    assert [c.id for c in out] == [found[0].id, found[0].id + 1]
+    assert out[1].dist == found[0].dist

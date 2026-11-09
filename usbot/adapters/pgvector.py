@@ -3,8 +3,9 @@
 Schemat tabeli `chunks`: infra/init.sql. Kolejność, duplikaty i fuzja list są w
 `usbot.core.ranking`; tu są zapytania SQL i zamiana wierszy na `Chunk`.
 """
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from datetime import date
 from typing import Literal
 
 import psycopg
@@ -12,6 +13,7 @@ from pgvector.psycopg import register_vector
 
 from usbot.core.models import Chunk
 from usbot.core.ranking import for_question_language, merge_best, rank_key, rrf, select
+from usbot.core.scope import OutdatedFilter, for_audience, without_outdated
 from usbot.ports import Embedder
 
 Mode = Literal["vector", "hybrid"]
@@ -112,7 +114,8 @@ class PgvectorRetriever:
     Z `old_news_penalty` > 0 fragmenty aktualności/wydarzeń starszych niż
     `old_news_days` dostają `score` = dist + kara i według niego są sortowane; próg
     nadal dotyczy samej odległości. `max_per_url`: limit fragmentów z jednej strony
-    (0 = bez limitu).
+    (0 = bez limitu). `outdated_filter` i `audience_filter`: reguły z usbot/core/scope.py.
+    Bez `faq_enabled` wpisy FAQ (`page_type` = faq) nie trafiają do wyników.
 
     Z `pool` (create_pool()) połączenia pochodzą z puli; bez niej każde wyszukiwanie
     otwiera własne połączenie z `database_url` (cli.py, evaluate.py).
@@ -120,7 +123,9 @@ class PgvectorRetriever:
 
     def __init__(self, database_url: str, embedder: Embedder, *, mode: Mode = "vector",
                  old_news_penalty: float = 0.0, old_news_days: int = 730,
-                 max_per_url: int = 2, pool=None) -> None:
+                 max_per_url: int = 2, outdated_filter: OutdatedFilter = "off",
+                 audience_filter: bool = False, faq_enabled: bool = False, pool=None,
+                 today: Callable[[], date] = date.today) -> None:
         if mode not in MODES:
             raise ValueError(f"RETRIEVAL_MODE musi być 'vector' albo 'hybrid', jest {mode!r}")
         self.database_url = database_url
@@ -129,7 +134,11 @@ class PgvectorRetriever:
         self.old_news_penalty = old_news_penalty
         self.old_news_days = old_news_days
         self.max_per_url = max_per_url
+        self.outdated_filter = outdated_filter
+        self.audience_filter = audience_filter
+        self.faq_enabled = faq_enabled
         self.pool = pool
+        self.today = today
 
     @contextmanager
     def _connection(self, timeout: float | None = None) -> Iterator[psycopg.Connection]:
@@ -157,7 +166,22 @@ class PgvectorRetriever:
         treści i limit na stronę (select) stosujemy po złączeniu.
         """
         merged = merge_best(self.candidates(q, k) for q in queries)
-        return select(for_question_language(merged, queries[-1]), k, self.max_per_url)
+        if not self.faq_enabled:
+            merged = [c for c in merged if c.page_type != "faq"]
+        question = queries[-1]
+        chunks = without_outdated(for_question_language(merged, question), question,
+                                  self.outdated_filter, self.today(), self.old_news_days)
+        if self.audience_filter:
+            chunks = for_audience(chunks, question)
+        return select(chunks, k, self.max_per_url)
+
+    def chunks_by_ids(self, ids: Sequence[int]) -> list[Chunk]:
+        """Fragmenty o podanych identyfikatorach (sąsiedzi); odległość uzupełnia NeighborRetriever."""
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT id, url, title, content, page_type, published_at, body_hash, 0.0::float8, false "
+                "FROM chunks WHERE id = ANY(%s)", (list(ids),)).fetchall()
+        return [_to_chunk(r, 0.0) for r in rows]
 
     # --- kandydaci ---
 
