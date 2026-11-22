@@ -124,7 +124,8 @@ class PgvectorRetriever:
     def __init__(self, database_url: str, embedder: Embedder, *, mode: Mode = "vector",
                  old_news_penalty: float = 0.0, old_news_days: int = 730,
                  max_per_url: int = 2, outdated_filter: OutdatedFilter = "off",
-                 audience_filter: bool = False, faq_enabled: bool = False, pool=None,
+                 audience_filter: bool = False, faq_enabled: bool = False,
+                 ef_search: int = 40, content_language_filter: bool = False, pool=None,
                  today: Callable[[], date] = date.today) -> None:
         if mode not in MODES:
             raise ValueError(f"RETRIEVAL_MODE musi być 'vector' albo 'hybrid', jest {mode!r}")
@@ -137,6 +138,8 @@ class PgvectorRetriever:
         self.outdated_filter = outdated_filter
         self.audience_filter = audience_filter
         self.faq_enabled = faq_enabled
+        self.ef_search = ef_search
+        self.content_language_filter = content_language_filter
         self.pool = pool
         self.today = today
 
@@ -169,7 +172,7 @@ class PgvectorRetriever:
         if not self.faq_enabled:
             merged = [c for c in merged if c.page_type != "faq"]
         question = queries[-1]
-        chunks = without_outdated(for_question_language(merged, question), question,
+        chunks = without_outdated(for_question_language(merged, question, self.content_language_filter), question,
                                   self.outdated_filter, self.today(), self.old_news_days)
         if self.audience_filter:
             chunks = for_audience(chunks, question)
@@ -214,10 +217,16 @@ class PgvectorRetriever:
 
     def _vector_candidates(self, conn: psycopg.Connection, qvec: list[float],
                            n: int) -> list[Chunk]:
-        """n najbliższych fragmentów z indeksu HNSW, posortowanych według `score`."""
-        if n > 40:  # domyślny hnsw.ef_search = 40 to też limit liczby wyników
+        """n najbliższych fragmentów z indeksu HNSW, posortowanych według `score`.
+
+        `hnsw.ef_search` to długość listy kandydatów w grafie i zarazem limit liczby wyników.
+        Domyślne 40 gubi najbliższe fragmenty (recall@40 0,87; docs/testy.md, 6.11), więc
+        przeszukiwana lista ma co najmniej `ef_search` (HNSW_EF_SEARCH) pozycji.
+        """
+        ef = max(int(n), self.ef_search)
+        if ef != 40:
             # SET LOCAL: tylko do końca transakcji — połączenie z puli wraca bez zmiany
-            conn.execute(f"SET LOCAL hnsw.ef_search = {int(n)}")
+            conn.execute(f"SET LOCAL hnsw.ef_search = {ef}")
         rows = conn.execute(
             f"SELECT {_COLUMNS} FROM chunks ORDER BY dist LIMIT %(n)s",
             {"qvec": qvec, "old_days": self.old_news_days, "n": n},

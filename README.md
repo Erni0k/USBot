@@ -379,7 +379,9 @@ nie trafiają do `os.environ` — zmienne bibliotek (np. `HF_HOME`) ustaw w śro
 | `OLD_NEWS_PENALTY` | kara dodawana do odległości (tylko przy sortowaniu) dla aktualności i wydarzeń starszych niż `OLD_NEWS_DAYS`; `0` = wyłączone | `0` |
 | `OLD_NEWS_DAYS` | od ilu dni aktualność/wydarzenie jest „stare" | `730` |
 | `MAX_PER_URL` | najwyżej tyle fragmentów z jednej strony w wynikach wyszukiwania; `0` = bez limitu | `2` |
-| `OUTDATED_FILTER` | przy pytaniach o bieżące zasady pomija treści przestarzałe: `off`, `covid` (strony o pandemii), `all` (także aktualności starsze niż `OLD_NEWS_DAYS`); pytania o przeszłość widzą wszystko (`docs/testy.md`, 6.10) | `covid` |
+| `OUTDATED_FILTER` | przy pytaniach o bieżące zasady pomija treści przestarzałe: `off`, `covid` (strony o pandemii), `years` (także strony, których tytuł dotyczy lat akademickich zakończonych co najmniej dwa lata temu), `all` (pandemia i aktualności starsze niż `OLD_NEWS_DAYS`); pytania o przeszłość widzą wszystko (`docs/testy.md`, 6.10–6.11) | `covid` |
+| `HNSW_EF_SEARCH` | długość listy kandydatów w indeksie HNSW (`hnsw.ef_search`); domyślne 40 gubiło najbliższe fragmenty (6.11) | `400` |
+| `CONTENT_LANGUAGE_FILTER` | dla pytań po polsku pomija fragmenty po angielsku lub ukraińsku pod polskimi adresami i zaślepki angielskiej wersji serwisu (pomiar bez poprawy, 6.11) | `false` |
 | `AUDIENCE_FILTER` | strony dla kandydatów (`rekrutacja.us.edu.pl` i podobne) tylko przy pytaniach o rekrutację | `true` |
 | `FAQ_ENABLED` | ręcznie sprawdzone odpowiedzi z `knowledge/faq.jsonl` (typ `faq`) w wynikach wyszukiwania | `true` |
 | `CLARIFY_DETAILS` | dopytywanie bez LLM-a o przedmiot (nieobecności, brak oceny) albo system (konto) | `true` |

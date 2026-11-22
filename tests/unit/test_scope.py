@@ -5,7 +5,7 @@ import pytest
 
 from tests.fakes import chunk
 from usbot.core.scope import (asks_about_past, asks_about_recruitment, for_audience,
-                              without_outdated)
+                              is_past_academic_year, without_outdated)
 
 TODAY = date(2026, 11, 9)
 
@@ -85,3 +85,34 @@ def test_karta_kierunku_tylko_przy_pytaniu_o_kierunek():
     card = [chunk(1, "https://rekrutacja.us.edu.pl/karta-kierunku/administracja")]
     assert for_audience(card, "Jak skontaktować się z administracją uczelni?") == []
     assert len(for_audience(card, "Ile godzin praktyk jest na administracji?")) == 1
+
+
+# --- minione lata akademickie (OUTDATED_FILTER=years) ---
+
+TODAY_2026 = date(2026, 11, 22)
+
+
+@pytest.mark.parametrize("title, past", [
+    ("List rektora do studentów UŚ na nowy rok akademicki 2020/2021", True),
+    ("Ankiety oceniające zajęcia w semestrze zimowym 2023/2024", True),
+    ("Przewodnik dla osób rozpoczynających studia 2024/2025", False),
+    ("Świadczenia w roku akademickim 2025/26", False),
+    ("Organizacja roku akademickiego 2026/2027", False),
+    ("Regulamin studiów", False),
+])
+def test_strona_o_minionym_roku_akademickim(title, past):
+    assert is_past_academic_year(chunk(1, content=f"{title}\ntreść"), TODAY_2026) is past
+
+
+def test_tryb_years_pomija_miniony_rok_tylko_przy_pytaniu_o_biezace_zasady():
+    old = chunk(1, content="List rektora 2020/2021\ntreść")
+    now = chunk(2, content="Organizacja roku 2026/2027\ntreść")
+    assert without_outdated([old, now], "Jak wygląda rok akademicki?", "years", TODAY_2026, 730) == [now]
+    assert without_outdated([old, now], "Co pisał rektor w 2020?", "years", TODAY_2026, 730) == [old, now]
+    assert without_outdated([old, now], "Jak wygląda rok akademicki?", "covid", TODAY_2026, 730) == [old, now]
+
+
+def test_rok_w_naglowku_sekcji_nie_liczy_sie():
+    c = chunk(1, title="Ubezpieczenia zdrowotne | Student",
+              content="Ubezpieczenia zdrowotne | Student > doktoranci sprzed roku ak. 2019/2020\ntreść")
+    assert not is_past_academic_year(c, TODAY_2026)

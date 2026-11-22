@@ -479,7 +479,9 @@ wcześniejsze kopie są usuwane w tej samej transakcji (opis reguły w README).
 | `OLD_NEWS_PENALTY` | `0` | Kara do odległości (tylko przy sortowaniu) dla `news`/`event` starszych niż `OLD_NEWS_DAYS`; `0` = wyłączone |
 | `OLD_NEWS_DAYS` | `730` | Od ilu dni aktualność/wydarzenie jest „stare" |
 | `MAX_PER_URL` | `2` | Najwyżej tyle fragmentów z jednej strony w wynikach; `0` = bez limitu |
-| `OUTDATED_FILTER` | `covid` | `off`, `covid` albo `all`: przy pytaniach o bieżące zasady bez stron o pandemii (`all`: także bez starych aktualności); pytania o przeszłość bez filtra (`usbot/core/scope.py`) |
+| `OUTDATED_FILTER` | `covid` | `off`, `covid`, `years` albo `all`: przy pytaniach o bieżące zasady bez stron o pandemii (`years`: także bez stron o latach akademickich zakończonych co najmniej dwa lata temu; `all`: bez starych aktualności); pytania o przeszłość bez filtra (`usbot/core/scope.py`) |
+| `HNSW_EF_SEARCH` | `400` | `hnsw.ef_search` przy wyszukiwaniu wektorowym (co najmniej tyle, ile kandydatów); więcej = dokładniej, wolniej |
+| `CONTENT_LANGUAGE_FILTER` | `false` | Dla pytań po polsku bez fragmentów w innym języku i zaślepek „Sorry, this entry is only available in…” |
 | `AUDIENCE_FILTER` | `true` | Strony dla kandydatów tylko przy pytaniach o rekrutację |
 | `FAQ_ENABLED` | `true` | Wpisy z `knowledge/faq.jsonl` (`page_type` = `faq`, adres `faq://<id>#<strona>`) w wynikach |
 | `CLARIFY_DETAILS` | `true` | Zdarzenie `clarify` także przy pytaniach bez przedmiotu lub systemu (`usbot/core/clarify.py`) |

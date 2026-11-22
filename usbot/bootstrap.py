@@ -28,7 +28,8 @@ def build_retriever_parts(settings: Settings, embedder: Embedder | None = None, 
         mode=settings.retrieval_mode, old_news_penalty=settings.old_news_penalty,
         old_news_days=settings.old_news_days, max_per_url=settings.max_per_url,
         outdated_filter=settings.outdated_filter, audience_filter=settings.audience_filter,
-        faq_enabled=settings.faq_enabled, pool=pool,
+        faq_enabled=settings.faq_enabled, ef_search=settings.hnsw_ef_search,
+        content_language_filter=settings.content_language_filter, pool=pool,
     )
     def expanded(retriever: Retriever) -> Retriever:
         if not settings.neighbor_pages:

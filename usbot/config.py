@@ -72,9 +72,14 @@ class Settings(BaseSettings):
     old_news_days: int = 730
     # Najwyżej tyle fragmentów z jednej strony (URL-a) w wynikach; 0 = bez limitu.
     max_per_url: int = 2
-    # Przy pytaniach o bieżące zasady: off, covid (bez stron o pandemii) albo all (także bez
-    # aktualności starszych niż OLD_NEWS_DAYS). Pomiar: docs/testy.md (6.10).
-    outdated_filter: Annotated[Literal["off", "covid", "all"], BeforeValidator(_lower)] = "covid"
+    # hnsw.ef_search: długość listy kandydatów w indeksie HNSW (więcej = dokładniej, wolniej).
+    hnsw_ef_search: int = Field(400, ge=1, le=1000)
+    # Przy pytaniach o bieżące zasady: off, covid (bez stron o pandemii), years (także bez stron
+    # o minionych latach akademickich) albo all (pandemia i aktualności starsze niż OLD_NEWS_DAYS).
+    # Pomiar: docs/testy.md (6.10, 6.11).
+    outdated_filter: Annotated[Literal["off", "covid", "years", "all"], BeforeValidator(_lower)] = "covid"
+    # Dla pytań po polsku bez fragmentów w innym języku i zaślepek angielskiej wersji serwisu.
+    content_language_filter: EnvBool = False
     # Strony dla kandydatów tylko przy pytaniach o rekrutację (usbot/core/scope.py).
     audience_filter: EnvBool = True
     # Sąsiednie fragmenty tej samej sekcji dla NEIGHBOR_PAGES najlepszych stron; 0 = wyłączone.

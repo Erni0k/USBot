@@ -24,15 +24,50 @@ _POLISH_QUESTION = re.compile(r"[ąćęłńóśźż]|\b(?:jak|gdzie|czy|kiedy|il
 _ENGLISH_PAGE = re.compile(r"/(?:en|english-[^/]*)(?:/|$)")
 
 
-def for_question_language(chunks: list[Chunk], question: str) -> list[Chunk]:
+# Zaślepka angielskiej wersji serwisu: sama nawigacja, bez treści
+_STUB = "sorry, this entry is only available in"
+_PL_WORDS = frozenset("i w z na się do jest nie że oraz dla od po przez lub to są jak co można "
+                      "należy który która które student studentów uczelni".split())
+_EN_WORDS = frozenset("the and of to in for is are with on be this that by as from will at or "
+                      "students university you your".split())
+_WORD = re.compile(r"[^\W\d_]+")
+_DIACRITICS = frozenset("ąćęłńóśźż")
+
+
+def foreign_content(chunk: Chunk) -> bool:
+    """Treść fragmentu nie jest po polsku albo to zaślepka „Sorry, this entry is only available in…”.
+
+    Pierwsza linia (tytuł i sekcja) jest pomijana, bo bywa polska przy angielskiej treści.
+    Angielski: co najmniej 5 częstych słów angielskich, ponad 3 razy więcej niż polskich i
+    prawie bez polskich znaków. Cyrylica: ponad 30% liter.
+    """
+    body = (chunk.content.partition("\n")[2] or chunk.content).lower()
+    if _STUB in body:
+        return True
+    letters = [ch for ch in body if ch.isalpha()]
+    if not letters:
+        return False
+    if sum("\u0400" <= ch <= "\u04ff" for ch in letters) / len(letters) > 0.3:
+        return True
+    words = _WORD.findall(body)
+    pl = sum(w in _PL_WORDS for w in words)
+    en = sum(w in _EN_WORDS for w in words)
+    diacritics = sum(ch in _DIACRITICS for ch in letters) / len(letters)
+    return en >= 5 and en > 3 * pl and diacritics < 0.01
+
+
+def for_question_language(chunks: list[Chunk], question: str, by_content: bool = False) -> list[Chunk]:
     """Dla pytania po polsku pomija angielskie wersje stron (/en/, /english-…).
 
     Te wersje (często nieprzetłumaczone kopie albo strony dla obcokrajowców) zajmowały
-    miejsca w kontekście i zmieniały odpowiedź. Gdy nie ma nic innego, zostają.
+    miejsca w kontekście i zmieniały odpowiedź. Z `by_content` (CONTENT_LANGUAGE_FILTER)
+    pomija też fragmenty w innym języku pod polskimi adresami i zaślepki angielskiej wersji
+    serwisu (foreign_content()). Gdy nie ma nic innego, zostają.
     """
     if not _POLISH_QUESTION.search(question):
         return chunks
-    return [c for c in chunks if not _ENGLISH_PAGE.search(c.url)] or chunks
+    return [c for c in chunks
+            if not _ENGLISH_PAGE.search(c.url) and not (by_content and foreign_content(c))] or chunks
 
 
 def rank_key(c: Chunk) -> tuple:

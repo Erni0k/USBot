@@ -13,7 +13,7 @@ from typing import Literal
 from usbot.core.faculties import normalize
 from usbot.core.models import Chunk
 
-OutdatedFilter = Literal["off", "covid", "all"]
+OutdatedFilter = Literal["off", "covid", "years", "all"]
 
 # Wszystkie wzorce działają na tekście po normalize(): małe litery, bez polskich znaków.
 _COVID = re.compile(r"covid|koronawirus|sars-?cov|pandemi|epidemi")
@@ -21,6 +21,7 @@ _ASKS_ABOUT_PAST = re.compile(
     r"covid|koronawirus|pandemi|epidemi|\bkiedys\b|\bdawniej\b|\bhistori|\bw przeszlosci\b"
     r"|\bprzed laty\b|\bpoprzedni\w* (?:rok|lat)|\bubiegl\w* rok|\bzeszl\w* rok")
 _YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
+_ACADEMIC_YEAR = re.compile(r"\b(20\d{2})\s*/\s*(20\d{2}|\d{2})\b")
 
 
 def academic_year_start(today: date) -> int:
@@ -39,6 +40,19 @@ def is_covid(chunk: Chunk) -> bool:
     return bool(_COVID.search(normalize(f"{chunk.url} {chunk.title or ''} {chunk.content}")))
 
 
+def is_past_academic_year(chunk: Chunk, today: date) -> bool:
+    """Tytuł strony dotyczy tylko lat akademickich zakończonych co najmniej dwa lata temu.
+
+    W roku 2026/2027 to „List rektora … 2020/2021” albo „Ankiety … 2023/2024”. Ostatnie dwa
+    lata zostają, bo bywają najnowszą wersją w serii (przewodnik dla pierwszego roku
+    2024/2025). Liczy się tylko tytuł: nagłówek sekcji wspomina lata także w treściach
+    aktualnych („doktoranci, którzy rozpoczęli studia przed rokiem ak. 2019/2020”).
+    """
+    title = chunk.title or chunk.content.partition("\n")[0].split(" > ")[0]
+    ends = [int(end) if len(end) == 4 else 2000 + int(end) for _, end in _ACADEMIC_YEAR.findall(title)]
+    return bool(ends) and max(ends) < academic_year_start(today) - 1
+
+
 def is_old_news(chunk: Chunk, today: date, days: int) -> bool:
     """Aktualność albo wydarzenie starsze niż `days` dni."""
     return (chunk.page_type in ("news", "event") and chunk.published_at is not None
@@ -49,12 +63,14 @@ def without_outdated(chunks: Sequence[Chunk], question: str, mode: OutdatedFilte
                      days: int) -> list[Chunk]:
     """Bez treści nieaktualnych, chyba że pytanie dotyczy przeszłości.
 
-    `covid` pomija fragmenty o pandemii; `all` także stare aktualności i wydarzenia.
+    `covid` pomija fragmenty o pandemii; `years` także strony o minionych latach akademickich
+    (is_past_academic_year()); `all` pandemię i stare aktualności oraz wydarzenia.
     """
     if mode == "off" or asks_about_past(question, today):
         return list(chunks)
     return [c for c in chunks
-            if not is_covid(c) and not (mode == "all" and is_old_news(c, today, days))]
+            if not is_covid(c) and not (mode == "years" and is_past_academic_year(c, today))
+            and not (mode == "all" and is_old_news(c, today, days))]
 
 
 # Strony serwisu rekrutacji, które dotyczą też osób już studiujących

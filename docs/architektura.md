@@ -139,7 +139,9 @@ Limity czasu: `LLM_TIMEOUT` (połączenie z LLM-em i każdy kolejny fragment odp
 nie ponawia zapytań), `DB_TIMEOUT` (połączenie z puli, nawiązanie połączenia,
 `statement_timeout`), `HEALTH_TIMEOUT` (każde sprawdzenie w `/api/health`). Połączenia z
 puli są wielokrotnego użytku, więc `PgvectorRetriever` ustawia `hnsw.ef_search` przez
-`SET LOCAL` — tylko w transakcji jednego wyszukiwania. Kontrakt: [API](api.md) (3.1).
+`SET LOCAL` — tylko w transakcji jednego wyszukiwania. Wartość to co najmniej
+`HNSW_EF_SEARCH` (400): przy domyślnym 40 indeks gubił najbliższe fragmenty
+(recall@40 0,87; [Testy](testy.md), 6.11). Kontrakt: [API](api.md) (3.1).
 
 **Dopytywanie o wydział** (`usbot/core/faculties.py`) rozpoznaje „dziekanat” w ostatnim
 pytaniu (po zamianie na małe litery i usunięciu polskich znaków; „dziekan” i „urlop

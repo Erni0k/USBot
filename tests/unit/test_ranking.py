@@ -3,7 +3,7 @@ import pytest
 
 from tests.fakes import FakeReranker, FakeRetriever, chunk
 from usbot.core.ranking import (RERANK_CANDIDATES, RRF_K, NeighborRetriever, RerankingRetriever,
-                                estimated_tokens, merge_best, rank_key, rerank, rrf, select,
+                                estimated_tokens, for_question_language, foreign_content, merge_best, rank_key, rerank, rrf, select,
                                 with_neighbors)
 
 
@@ -146,3 +146,28 @@ def test_retriever_z_sasiadami_przekazuje_zapytanie_i_dokłada_fragmenty():
     inner = FakeRetriever([_c(5)])
     retriever = NeighborRetriever(inner, _fetcher(_c(6)), pages=1, per_side=1, max_tokens=5000)
     assert [c.id for c in retriever.search(["pytanie"], 3)] == [5, 6]
+
+
+# --- treść w innym języku (CONTENT_LANGUAGE_FILTER) ---
+
+EN_BODY = "The students of the University are invited to the event and you will find the details on this page."
+PL_BODY = "Studenci mogą złożyć wniosek w dziekanacie, a decyzję podejmuje dziekan w ciągu 14 dni."
+
+
+@pytest.mark.parametrize("body, foreign", [
+    (EN_BODY, True),
+    (PL_BODY, False),
+    ("home link Student activities Sorry, this entry is only available in Polish.", True),
+    ("Студентське самоврядування Сілезького університету в Катовіцах", True),
+    ("Erasmus+ – learning agreement, dokumenty do pobrania i terminy na wydziale.", False),
+])
+def test_treść_w_innym_jezyku(body, foreign):
+    assert foreign_content(chunk(1, content=f"Tytuł > Sekcja\n{body}")) is foreign
+
+
+def test_filtr_jezyka_tresci_tylko_z_ustawieniem_i_dla_polskiego_pytania():
+    en, pl = chunk(1, content=f"T\n{EN_BODY}"), chunk(2, content=f"T\n{PL_BODY}")
+    assert for_question_language([en, pl], "Jak złożyć wniosek?", by_content=True) == [pl]
+    assert for_question_language([en, pl], "Jak złożyć wniosek?") == [en, pl]
+    assert for_question_language([en, pl], "How do I apply?", by_content=True) == [en, pl]
+    assert for_question_language([en], "Jak złożyć wniosek?", by_content=True) == [en]
