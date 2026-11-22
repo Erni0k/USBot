@@ -65,9 +65,8 @@ reguły z `usbot/core/scope.py` pomijają strony o pandemii przy pytaniach o bie
 `select()` wybiera `TOP_K`: ta sama treść tylko raz, najwyżej `MAX_PER_URL` fragmentów
 z jednej strony (z `RERANK=true`: 20 kandydatów ocenia cross-encoder i zostaje `TOP_K`
 najlepszych) → fragmenty dalsze niż `MAX_DISTANCE` (z rerankingiem: z wynikiem poniżej
-`MIN_RERANK_SCORE`) są odrzucane → przy pytaniu o dziekanat bez wydziału bot dopytuje,
-a przy pytaniu bez przedmiotu lub systemu (`usbot/core/clarify.py`) jeszcze przed
-wyszukiwaniem →
+`MIN_RERANK_SCORE`) są odrzucane (przy pytaniu o dziekanat bez wydziału i przy pytaniu bez
+przedmiotu lub systemu, `usbot/core/clarify.py`, bot dopytuje jeszcze przed wyszukiwaniem) →
 kontekst (z datą publikacji przy komunikatach i wydarzeniach) wbudowywany jest w system
 prompt razem z dzisiejszą datą → model LLM generuje odpowiedź strumieniowo.
 

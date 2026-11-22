@@ -44,7 +44,7 @@ Status: ✅ — zaimplementowany (plik w kolumnie „Test”), ⏳ — planowany
 | T18 | Jednostkowy | `rerank()` | Dwa zapytania, 3 fragmenty, atrapa rerankera | Malejąco według `rerank`; każdy fragment ma lepszy z dwóch wyników | ✅ `unit/test_ranking.py` |
 | T19 | Jednostkowy | `RerankingRetriever`, `cutoff()` | 30 kandydatów; trafny fragment dalszy niż `MAX_DISTANCE` | Reranker ocenia 20 kandydatów, zostaje `k`; próg na `rerank` (`MIN_RERANK_SCORE`), odległość nie odcina | ✅ `unit/test_ranking.py`, `unit/test_chat_service.py` |
 | T20 | Jednostkowy | `cutoff()` | Fragmenty z odległością 0.30 / 0.43 / 0.4301; progi `None` | 0.43 przechodzi (≤), 0.4301 odpada; `None` wyłącza próg | ✅ `unit/test_chat_service.py` |
-| T21 | Jednostkowy | `ChatService.stream()` | „Jakie są godziny otwarcia dziekanatu?”; to samo z „WNP”; odpowiedź „Wydział Nauk Przyrodniczych” po dopytaniu | Bez wydziału `clarify` z 7 wydziałami, LLM niewywołany; z wydziałem i po dopytaniu — odpowiedź LLM-a; pytanie spoza zakresu dostaje `refused`, nie `clarify` | ✅ `unit/test_chat_service.py` |
+| T21 | Jednostkowy | `ChatService.stream()` | „Jakie są godziny otwarcia dziekanatu?”; to samo z „WNP”; odpowiedź „Wydział Nauk Przyrodniczych” po dopytaniu | Bez wydziału `clarify` z 7 wydziałami, LLM niewywołany; z wydziałem i po dopytaniu — odpowiedź LLM-a; dopytanie przed wyszukiwaniem, także gdy nic nie przeszłoby progu; dalekie pytanie bez dziekanatu dostaje `refused` | ✅ `unit/test_chat_service.py` |
 | T22 | Jednostkowy | `needs_faculty()`, `mentioned_faculties()`, `expand_faculties()` | Skróty i nazwy wydziałów (z polskimi znakami i bez), „dziekan”, „urlop dziekański”, wydział sprzed >3 pytań; „WNP”, „a wnst?”, „WNPX” | Wydział rozpoznany po skrócie lub rdzeniu nazwy; „dziekan”/„dziekański” nie wywołują dopytania; przed skrótem dopisana pełna nazwa, tylko dla całych słów | ✅ `unit/test_prompts.py` |
 | T23 | Jednostkowy | `ChatService.stream()` | 3 fragmenty z 2 stron, historia z jedną turą | Zdarzenia `sources` → `token`… → `done`; źródła z wyników (każda strona raz); LLM dostaje prompt z kontekstem + historię + pytanie; `done.answer` = sklejone tokeny | ✅ `unit/test_chat_service.py` |
 | T24 | Jednostkowy | `Settings` | Zmienne `TOP_K`, `MAX_DISTANCE`, `DATABASE_URL`, `RERANK=1`/`TRUE`, `RETRIEVAL_MODE=" Hybrid "` | Te same nazwy i interpretacja co `os.getenv` (opcja włączona tylko dla „true”) | ✅ `unit/test_config.py` |
@@ -1857,8 +1857,8 @@ Pozostałe błędy na `holdout2` (konfiguracja końcowa):
 - k14: 894 zł zamiast 777 zł za miejsce w DSN w Cieszynie (inna stawka z innej strony).
 - k15, k22: odmowy, choć strony z odpowiedzią są w bazie (ten sam typ błędu co w 6.10).
 - k39 („do której jest dziś otwarty dziekanat?”): odmowa na progu zamiast dopytania o
-  wydział, bo dopytanie o wydział działa dopiero po progu odległości. Kolejność do zmiany w
-  `ChatService`, ale `holdout2` nie może już posłużyć do jej sprawdzenia.
+  wydział, bo dopytanie o wydział działało dopiero po progu odległości. Poprawione po pomiarze
+  (niżej), więc k39 nie jest już niezależnym sprawdzianem.
 
 ### Wnioski
 
@@ -1871,5 +1871,16 @@ Pozostałe błędy na `holdout2` (konfiguracja końcowa):
    przy 2–3 błędnych odpowiedziach na 40 pytań różnica jednego pytania to już 25–50%.
 4. Pozostałe błędy to sprzeczne lub podobne strony (k04, k14) i wyszukiwanie dla pytań
    potocznych (k15, k22). Bez większego modelu nie poprawi się wybór między dwiema podobnymi
-   stronami; do sprawdzenia bez zmiany modelu: kolejność dopytywania o wydział i próg dla
-   pytań potocznych, na nowym zestawie.
+   stronami; do sprawdzenia bez zmiany modelu: próg dla pytań potocznych, na nowym zestawie.
+
+### Poprawka po pomiarze: dopytanie o wydział przed wyszukiwaniem
+
+`ChatService.stream()` sprawdzał `needs_faculty()` dopiero po progu odległości, więc pytanie o
+dziekanat bez wydziału, które nie przeszło progu, dostawało odmowę zamiast dopytania (k39).
+Test „odmowa ma pierwszeństwo przed dopytaniem” zakładał, że takie pytanie jest spoza zakresu,
+ale pytanie spoza zakresu `oos-polsl` (dziekanat Politechniki Śląskiej) i tak przechodziło próg
+i dostawało dopytanie. Teraz dopytanie o wydział jest przed wyszukiwaniem, jak dopytanie o
+szczegół. We wszystkich zestawach (`queries.jsonl`, `golden_80.jsonl`, `holdout.jsonl`,
+`holdout2.jsonl`) wywołuje je 5 pytań: 4 z oczekiwanym dopytaniem (g33, g66, h40, k39) i
+`oos-polsl`, który dostawał je już wcześniej. Zmienia się więc tylko k39; odmowy spoza zakresu
+(21/22) i w zakresie bez zmian, dlatego bez ponownego pomiaru z LLM-em.

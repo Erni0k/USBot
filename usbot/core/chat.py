@@ -139,6 +139,14 @@ class ChatService:
         """
         history = recent_turns(history, self.max_history_turns)
         messages: list[Message] = [*history, {"role": "user", "content": question}]
+        # Dopytania przed wyszukiwaniem: bez wydziału pytanie o dziekanat często nie
+        # przechodzi progu („do której jest dziś otwarty dziekanat?”), a z wydziałem trafia
+        # we właściwą stronę (docs/testy.md, 6.11)
+        if needs_faculty(messages):
+            yield {"type": "clarify", "message": CLARIFY_MESSAGE,
+                   "options": faculty_options()}
+            yield {"type": "done", "answer": CLARIFY_MESSAGE}
+            return
         if self.clarify_details and (detail := needs_detail(messages)):
             yield {"type": "clarify", "message": detail.message, "options": detail.options}
             yield {"type": "done", "answer": detail.message}
@@ -148,11 +156,6 @@ class ChatService:
             # Nic w bazie nie jest dość bliskie — LLM dostałby same śmieci i zmyślał
             yield {"type": "refused", "message": NO_INFO}
             yield {"type": "done", "answer": NO_INFO}
-            return
-        if needs_faculty(messages):
-            yield {"type": "clarify", "message": CLARIFY_MESSAGE,
-                   "options": faculty_options()}
-            yield {"type": "done", "answer": CLARIFY_MESSAGE}
             return
 
         yield {"type": "sources", "sources": sources(chunks)}

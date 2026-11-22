@@ -91,9 +91,16 @@ def test_odpowiedz_na_dopytanie_trafia_do_llm():
     assert retriever.calls[0][0][0] == "Gdzie jest dziekanat?\nWydział Nauk Przyrodniczych"
 
 
-def test_odmowa_ma_pierwszenstwo_przed_dopytaniem():
+def test_dopytanie_o_wydzial_przed_wyszukiwaniem_i_progiem():
+    # „do której jest dziś otwarty dziekanat?” bez wydziału nie przechodziło progu (k39)
+    svc, retriever, llm = service([chunk(1, dist=0.9)])
+    assert [e["type"] for e in events(svc, "do której jest dziś otwarty dziekanat?")] == ["clarify", "done"]
+    assert retriever.calls == [] and llm.calls == []
+
+
+def test_dalekie_pytanie_bez_dziekanatu_nadal_odmowa():
     svc, _, _ = service([chunk(1, dist=0.9)])
-    assert events(svc, "Gdzie jest dziekanat?")[0]["type"] == "refused"
+    assert events(svc, "Gdzie jest dziekan?")[0]["type"] == "refused"
 
 
 # --- budowa kontekstu i strumień ------------------------------------------------
