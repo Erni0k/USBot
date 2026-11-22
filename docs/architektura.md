@@ -55,8 +55,9 @@ stopce odpowiedzi „FAQ (wpis sprawdzony ręcznie): <strona źródłowa>”, wi
 cytowanie działa jak przy stronach. Źródłem wpisu może być tylko strona uczelni albo część
 `tuning` z `evaluation/golden_80.jsonl`; nigdy `test` ani `evaluation/holdout.jsonl`.
 
-**Przepływ przy każdym pytaniu:** pytanie (wraz z kontekstem kilku poprzednich tur)
-jest embeddowane lokalnie → zapytanie wektorowe do PostgreSQL zwraca kandydatów (w trybie
+**Przepływ przy każdym pytaniu:** pytanie (wraz z kontekstem kilku poprzednich tur, ze
+skrótami wydziałów rozwiniętymi do nazw i slangiem uzupełnionym o urzędowe odpowiedniki,
+`usbot/core/slang.py`) jest embeddowane lokalnie → zapytanie wektorowe do PostgreSQL zwraca kandydatów (w trybie
 `hybrid` także zapytanie pełnotekstowe; obie listy łączy RRF, a każdy kandydat ma
 odległość wektorową) →
 reguły z `usbot/core/scope.py` pomijają strony o pandemii przy pytaniach o bieżące zasady

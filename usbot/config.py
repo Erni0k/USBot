@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     faq_enabled: EnvBool = True
     # Dopytywanie o przedmiot albo system, bez LLM-a (usbot/core/clarify.py).
     clarify_details: EnvBool = True
+    # Urzędowe odpowiedniki studenckiego slangu w zapytaniu do wyszukiwarki (usbot/core/slang.py).
+    slang_expansion: EnvBool = True
     # vector = samo wyszukiwanie wektorowe; hybrid = wektorowe + pełnotekstowe (RRF).
     retrieval_mode: Annotated[Literal["vector", "hybrid"], BeforeValidator(_lower)] = "vector"
     # Reranking: RERANK_CANDIDATES najlepszych fragmentów ocenia cross-encoder i zostaje TOP_K.

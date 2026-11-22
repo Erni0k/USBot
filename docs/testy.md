@@ -79,6 +79,7 @@ Status: ✅ — zaimplementowany (plik w kolumnie „Test”), ⏳ — planowany
 | T54 | Jedn. (+ frontend) | `faq_chunks()`, `source_label()`, `build_context()`, `SourceList` | Wpis z dwoma pytaniami i stroną źródłową, bez strony; stopka z wpisem FAQ | Fragment na każde pytanie z tym samym `body_hash`; etykieta „FAQ (wpis sprawdzony ręcznie)” w stopce i nagłówku kontekstu, stopka usuwana z historii; link do strony źródłowej, bez linku `faq://` | ✅ `unit/test_clarify.py`, `web/src/components/SourceList.test.tsx` |
 | T55 | Manualny | odpowiedzi bota na holdoucie | 40 nowych pytań (`evaluation/holdout.jsonl`), 3 przebiegi przed i po, ocena sensu na ślepo | Wyniki, diagnoza i decyzje w 6.10 | ✅ (2026-11-09) |
 | T56 | Jedn. + manualny | `HNSW_EF_SEARCH`, `foreign_content()`, `is_past_academic_year()` | Zaślepka i tekst angielski, cyrylica, polski tekst z angielskimi słowami; tytuły z latami akademickimi, rok w nagłówku sekcji; 159 pytań: indeks HNSW kontra pełny skan; `holdout2` (40 nowych pytań), 3 przebiegi przed i po | Filtry tylko z ustawieniem i dla pytań po polsku lub o bieżące zasady; recall@40 0,997 przy `ef_search` 400; wyniki i decyzje w 6.11 | ✅ `unit/test_ranking.py`, `unit/test_scope.py` (2026-11-22) |
+| T57 | Jedn. + manualny | `expand_slang()`, `ChatService(slang_expansion=True)` | Slang w różnych formach („pałę”, „komisa”, „dziekance”, „nieobek”, „wfie”); słowa urzędowe („warunek”, „komisja”, „urlop dziekański”); 32 pytania potoczne (`evaluation/potoczne.jsonl`), 3 przebiegi bez i ze słownikiem | Odpowiednik w nawiasie, najwyżej raz, tylko w zapytaniu do wyszukiwarki; słowa urzędowe bez zmian; wyniki w 6.12 | ✅ `unit/test_slang.py` (2026-11-23) |
 | T35 | Manualny | API + Ollama | `curl -N` na `/api/chat`, przerwanie curla w trakcie, `/api/health`; `evaluation/latency.py` | Tokeny na bieżąco, źródła przed tokenami; w logu serwera „przerwano odpowiedź”; czasy w docs/api.md (3.2) | ✅ (2026-11-04) |
 
 ## 6.3 Instrukcja uruchomienia testów
@@ -1884,3 +1885,86 @@ szczegół. We wszystkich zestawach (`queries.jsonl`, `golden_80.jsonl`, `holdou
 `holdout2.jsonl`) wywołuje je 5 pytań: 4 z oczekiwanym dopytaniem (g33, g66, h40, k39) i
 `oos-polsl`, który dostawał je już wcześniej. Zmienia się więc tylko k39; odmowy spoza zakresu
 (21/22) i w zakresie bez zmian, dlatego bez ponownego pomiaru z LLM-em.
+
+## 6.12 Pytania potoczne: słownik slangu
+
+2026-11-23, konfiguracja z 6.11 (`HNSW_EF_SEARCH=400`, dopytanie o wydział przed wyszukiwaniem).
+
+**Wynik w skrócie: słownik slangu (`SLANG_EXPANSION=true`) usuwa połowę niesłusznych odmów na
+pytaniach potocznych i jest włączony domyślnie.** Pytania potoczne były najsłabszą kategorią:
+w konfiguracji z 6.11 holdout z 6.10 miał w niej 6/15 zaliczeń automatycznych, a `holdout2`
+3/12, przy 60–100% w większości pozostałych kategorii.
+
+### Diagnoza
+
+Ten sam sens zapisany potocznie i urzędowo (odległość najbliższego fragmentu w bazie):
+
+| Pytanie potoczne → urzędowe | Odległość |
+|---|---|
+| „Dostałem pałę na poprawce… Mogę iść na komisa?” → „…ocena niedostateczna… egzamin komisyjny” | 0,409 → 0,285 |
+| „okradli mnie z kasy na czynsz” → „zapomoga po kradzieży” | 0,377 → 0,406 |
+| „co mam wziąć do akademika w cieszynie?” → „…do domu studenta DSN” | 0,358 → 0,360 |
+| „dostaliśmy kasę na koło… plakaty” → wersja urzędowa | 0,428 → 0,434 |
+
+Szkodzi studencki slang, którego model embeddingów nie łączy z językiem stron; sam luźny ton
+nie przeszkadza. Przeformułowanie pytań przez LLM sprawdzano wcześniej bez poprawy (6.9).
+
+### Zmiana
+
+`expand_slang()` (`usbot/core/slang.py`) dopisuje w nawiasie urzędowy odpowiednik po słowie ze
+slangu, tak jak `expand_faculties()` dopisuje nazwę wydziału: „pałę” → „pałę (ocena
+niedostateczna)”. Słownik (18 pozycji: „pała”, „komis”, „warun”, „dziekanka”, „legitka”, „wf”,
+„zerówka”, „kolos”, „labki”, „ćwiki”, „nieobka”, „L4”, „magisterka”, „inżynierka”,
+„dyplomówka”, „socjal”, „egz”, „erazmus”) obejmuje tylko słowa, które w języku urzędowym nie
+występują albo znaczą co innego („warunek” i „komisja” zostają bez zmian). Zmienia się tylko
+zapytanie do wyszukiwarki; pytanie w prompcie LLM-a zostaje. Bez LLM-a i bez opóźnienia.
+
+### Zestaw `evaluation/potoczne.jsonl`
+
+32 pytania studentów pisane potocznie (s01–s32, 30 z odpowiedzią i 2 z oczekiwaną odmową) z
+odpowiedziami ze stron w bazie: urlopy, legitymacja, WF, zmiana formy studiów, przeniesienie,
+wznowienie, awans, IOS, stypendia, akademiki, praktyki. Pytania przygotował Claude po
+ustaleniu słownika i bez dopasowywania go do nich: słownik zmienia 10 z 32 pytań, pozostałe
+używają słów spoza niego („zaoczne”, „rektorskie”, „reaktywacja”, „dwójka”). Zestaw
+zaakceptował autor projektu przed pomiarem.
+
+### Wyniki
+
+| Zestaw (3 przebiegi) | Bez słownika | Ze słownikiem |
+|---|---|---|
+| Pytania potoczne: zaliczone automatycznie | 16,0 | 17,7 (17–18) |
+| Pytania potoczne: niesłuszne odmowy (automatycznie) | 4,0 | 2,0 |
+| `tuning`: zaliczone / niesłuszne odmowy | 29,7 / 1,0 | 29,0 / 1,0 |
+| 6.7: spoza zakresu / w zakresie odrzucone | 21/22 / 1/57 | 20/22 / 1/57 |
+| 6.7: URL-e spoza kontekstu | 0/97 | 0/101 |
+
+Ocena sensu na ślepo (pytania potoczne, 104 różne odpowiedzi, wymieszane, bez adresów i numerów):
+
+| Średnia z 3 przebiegów | Bez słownika | Ze słownikiem |
+|---|---|---|
+| Poprawne | 20,7 (20–21) | **22,3 (21–24)** |
+| Częściowe | 4,3 | 4,7 |
+| Błędne | 3,0 | 3,0 |
+| Niesłuszne odmowy | 4,0 | **2,0** |
+
+s01 („ile max mogę siedzieć na dziekance”) i s11 („na magisterce dziennej też jest obowiązkowy
+wf?”) przeszły z odmowy we wszystkich przebiegach na poprawną odpowiedź we wszystkich; pozostałe
+różnice to pojedyncze odpowiedzi. W `tuning` i w zbiorze z 6.7 słownik nie zmienia żadnego
+pytania (z dotychczasowych zestawów tylko h09, h35 i h38 z holdoutu 6.10; przy h35 najbliższy
+fragment ma 0,376 zamiast 0,460, więc pytanie przechodzi próg), więc różnice tam to losowość
+modelu: pytanie spoza zakresu `oos-sum` dostało odpowiedź przy tym samym kontekście, przy
+którym w 6.11 była odmowa. Bramka CI (`evaluate.py`) korzysta z wyszukiwarki bez
+`ChatService`, więc słownik jej nie dotyczy.
+
+Pozostałe błędy na pytaniach potocznych, niezwiązane ze slangiem:
+
+- s04 („rozchorowałem się na dłużej”): odpowiedź o zajęciach WF zamiast o urlopie zdrowotnym.
+- s16 („wywalili mnie na pierwszym semestrze, mogę zrobić reaktywację?”): „tak”, choć
+  wznowienie wymaga zaliczenia pierwszego roku — odwrócony wniosek przy dobrej stronie.
+- s21 („robię dwa kierunki… jest jakiś indywidualny tryb?”): opis indywidualnych ścieżek
+  zamiast IOS.
+- s25 („papiery na rektorskie”) i s27 („miejsce w dwójce w DS7”): odmowy. „Rektorskie” nie ma w
+  słowniku; dopisanie go teraz byłoby strojeniem na tym zestawie.
+
+**Decyzja: `SLANG_EXPANSION=true` domyślnie.** Słownik warto rozszerzać na podstawie prawdziwych
+pytań z dziennika rozmów i ocen 👎 (6.6), a każde rozszerzenie sprawdzać na nowych pytaniach.

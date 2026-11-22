@@ -65,4 +65,5 @@ def build_chat_service(settings: Settings) -> ChatService:
     return ChatService(build_retriever(settings), build_llm(settings),
                        top_k=settings.top_k, max_distance=settings.max_distance,
                        min_rerank_score=settings.min_rerank_score,
-                       clarify_details=settings.clarify_details)
+                       clarify_details=settings.clarify_details,
+                       slang_expansion=settings.slang_expansion)

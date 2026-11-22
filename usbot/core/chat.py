@@ -22,6 +22,7 @@ from usbot.core.clarify import needs_detail
 from usbot.core.faculties import CLARIFY_MESSAGE, expand_faculties, faculty_options, needs_faculty
 from usbot.core.models import Chunk, Message
 from usbot.core.prompts import NO_INFO, build_system_prompt, recent_turns, search_queries
+from usbot.core.slang import expand_slang
 from usbot.ports import ChatLLM, Retriever
 
 
@@ -105,6 +106,7 @@ class ChatService:
     def __init__(self, retriever: Retriever, llm: ChatLLM, *, top_k: int,
                  max_distance: float | None, min_rerank_score: float | None,
                  max_history_turns: int | None = None, clarify_details: bool = False,
+                 slang_expansion: bool = False,
                  today: Callable[[], date] = date.today) -> None:
         self.retriever = retriever
         self.llm = llm
@@ -115,6 +117,8 @@ class ChatService:
         self.max_history_turns = max_history_turns
         # Dopytywanie o przedmiot albo system (usbot/core/clarify.py)
         self.clarify_details = clarify_details
+        # Urzędowe odpowiedniki slangu w zapytaniu do wyszukiwarki (usbot/core/slang.py)
+        self.slang_expansion = slang_expansion
         # Dzisiejsza data do promptu (aktualność komunikatów); w testach — stała data
         self.today = today
 
@@ -122,11 +126,15 @@ class ChatService:
         """Fragmenty dla ostatniego pytania w `messages`, po progu odcięcia.
 
         Szukamy zapytaniem z historii i samym ostatnim pytaniem (search_queries()),
-        ze skrótami wydziałów rozwiniętymi do pełnych nazw (expand_faculties());
+        ze skrótami wydziałów rozwiniętymi do pełnych nazw (expand_faculties()), a ze
+        `slang_expansion` także ze slangiem uzupełnionym o odpowiedniki (expand_slang());
         każdy fragment dostaje lepszy z wyników, a duplikaty, limit na stronę i
         ewentualny reranking działają na złączonej liście (Retriever.search).
         """
-        queries = list(dict.fromkeys(expand_faculties(q) for q in search_queries(messages)))
+        queries = [expand_faculties(q) for q in search_queries(messages)]
+        if self.slang_expansion:
+            queries = [expand_slang(q) for q in queries]
+        queries = list(dict.fromkeys(queries))
         chunks = self.retriever.search(queries, self.top_k)
         return cutoff(chunks, self.max_distance, self.min_rerank_score)
 
