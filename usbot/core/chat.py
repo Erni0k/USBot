@@ -22,7 +22,9 @@ from usbot.core.clarify import needs_detail
 from usbot.core.faculties import CLARIFY_MESSAGE, expand_faculties, faculty_options, needs_faculty
 from usbot.core.models import Chunk, Message
 from usbot.core.prompts import NO_INFO, build_system_prompt, recent_turns, search_queries
+from usbot.core.scope import asks_about_past
 from usbot.core.slang import expand_slang
+from usbot.core.tokens import fits
 from usbot.ports import ChatLLM, Retriever
 
 
@@ -100,13 +102,27 @@ def sources(chunks: Sequence[Chunk]) -> list[Source]:
     return list(out.values())
 
 
+def drop_order(chunks: Sequence[Chunk], question: str, today: date) -> Chunk:
+    """Fragment, który odpada pierwszy, gdy prompt jest za długi (pierwszy zostaje zawsze).
+
+    Przy pytaniach o bieżące zasady najpierw najstarszy komunikat lub wydarzenie: starsze
+    komunikaty z tej samej serii podają nieaktualne kwoty („Świadczenia… 2024/2025” obok
+    „…2026/2027”). Bez takich fragmentów albo przy pytaniu o przeszłość — najdalszy.
+    """
+    rest = list(chunks[1:])
+    dated = [c for c in rest if c.page_type in ("news", "event") and c.published_at is not None]
+    if dated and not asks_about_past(question, today):
+        return min(dated, key=lambda c: c.published_at)
+    return rest[-1]
+
+
 class ChatService:
     """Jedna tura rozmowy RAG. Zależy wyłącznie od portów Retriever i ChatLLM."""
 
     def __init__(self, retriever: Retriever, llm: ChatLLM, *, top_k: int,
                  max_distance: float | None, min_rerank_score: float | None,
                  max_history_turns: int | None = None, clarify_details: bool = False,
-                 slang_expansion: bool = False,
+                 slang_expansion: bool = False, prompt_max_tokens: int | None = None,
                  today: Callable[[], date] = date.today) -> None:
         self.retriever = retriever
         self.llm = llm
@@ -119,6 +135,8 @@ class ChatService:
         self.clarify_details = clarify_details
         # Urzędowe odpowiedniki slangu w zapytaniu do wyszukiwarki (usbot/core/slang.py)
         self.slang_expansion = slang_expansion
+        # Limit tokenów promptu (fit_prompt()); None = bez limitu
+        self.prompt_max_tokens = prompt_max_tokens
         # Dzisiejsza data do promptu (aktualność komunikatów); w testach — stała data
         self.today = today
 
@@ -137,6 +155,31 @@ class ChatService:
         queries = list(dict.fromkeys(queries))
         chunks = self.retriever.search(queries, self.top_k)
         return cutoff(chunks, self.max_distance, self.min_rerank_score)
+
+    def fit_prompt(self, chunks: list[Chunk], messages: list[Message]) -> tuple[list[Chunk], list[Message]]:
+        """Fragmenty i prompt, który zmieści się w `prompt_max_tokens`.
+
+        Za długi prompt zostawia za mało miejsca na odpowiedź w limicie kontekstu Ollamy i ją
+        ucina (docs/testy.md, 6.13). Najpierw odpadają fragmenty (zostaje co najmniej
+        jeden; drop_order()), potem najstarsze tury historii (zostaje ostatnie pytanie).
+        """
+        today = self.today()
+        question = messages[-1]["content"] if messages else ""
+
+        def build(cs: list[Chunk], ms: list[Message]) -> list[Message]:
+            return [{"role": "system", "content": build_system_prompt(cs, today)}, *ms]
+
+        prompt = build(chunks, messages)
+        if self.prompt_max_tokens is None:
+            return chunks, prompt
+        while len(chunks) > 1 and not fits(prompt, self.prompt_max_tokens):
+            drop = drop_order(chunks, question, today)
+            chunks = [c for c in chunks if c is not drop]
+            prompt = build(chunks, messages)
+        while len(messages) > 1 and not fits(prompt, self.prompt_max_tokens):
+            messages = messages[2:] if len(messages) > 2 else messages[-1:]
+            prompt = build(chunks, messages)
+        return chunks, prompt
 
     def stream(self, question: str, history: Sequence[Message] = ()) -> Iterator[Event]:
         """Odpowiedź na `question` w kontekście `history` (wcześniejsze tury) jako zdarzenia.
@@ -166,9 +209,8 @@ class ChatService:
             yield {"type": "done", "answer": NO_INFO}
             return
 
+        chunks, prompt = self.fit_prompt(chunks, without_citations(messages))
         yield {"type": "sources", "sources": sources(chunks)}
-        prompt: list[Message] = [{"role": "system", "content": build_system_prompt(chunks, self.today())},
-                                 *without_citations(messages)]
         numbers = source_numbers(chunks)
         citations = CitationFilter(len(numbers))
         parts: list[str] = []

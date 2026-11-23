@@ -94,6 +94,8 @@ class Settings(BaseSettings):
     clarify_details: EnvBool = True
     # Urzędowe odpowiedniki studenckiego slangu w zapytaniu do wyszukiwarki (usbot/core/slang.py).
     slang_expansion: EnvBool = True
+    # Limit szacowanej liczby tokenów promptu; reszta z 4096 Ollamy zostaje na odpowiedź.
+    prompt_max_tokens: int = Field(3300, ge=500)
     # vector = samo wyszukiwanie wektorowe; hybrid = wektorowe + pełnotekstowe (RRF).
     retrieval_mode: Annotated[Literal["vector", "hybrid"], BeforeValidator(_lower)] = "vector"
     # Reranking: RERANK_CANDIDATES najlepszych fragmentów ocenia cross-encoder i zostaje TOP_K.

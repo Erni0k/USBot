@@ -381,6 +381,7 @@ nie trafiają do `os.environ` — zmienne bibliotek (np. `HF_HOME`) ustaw w śro
 | `MAX_PER_URL` | najwyżej tyle fragmentów z jednej strony w wynikach wyszukiwania; `0` = bez limitu | `2` |
 | `OUTDATED_FILTER` | przy pytaniach o bieżące zasady pomija treści przestarzałe: `off`, `covid` (strony o pandemii), `years` (także strony, których tytuł dotyczy lat akademickich zakończonych co najmniej dwa lata temu), `all` (pandemia i aktualności starsze niż `OLD_NEWS_DAYS`); pytania o przeszłość widzą wszystko (`docs/testy.md`, 6.10–6.11) | `covid` |
 | `SLANG_EXPANSION` | dopisuje urzędowe odpowiedniki studenckiego slangu („pała”, „komis”, „dziekanka”, „legitka”, „wf”) w zapytaniu do wyszukiwarki; pytanie w prompcie bez zmian (6.12) | `true` |
+| `PROMPT_MAX_TOKENS` | limit szacowanej długości promptu (tokeny); dłuższy traci najpierw najstarsze komunikaty, potem najdalsze fragmenty, potem najstarszą historię — reszta z 4096 tokenów Ollamy zostaje na odpowiedź (6.13) | `3300` |
 | `HNSW_EF_SEARCH` | długość listy kandydatów w indeksie HNSW (`hnsw.ef_search`); domyślne 40 gubiło najbliższe fragmenty (6.11) | `400` |
 | `CONTENT_LANGUAGE_FILTER` | dla pytań po polsku pomija fragmenty po angielsku lub ukraińsku pod polskimi adresami i zaślepki angielskiej wersji serwisu (pomiar bez poprawy, 6.11) | `false` |
 | `AUDIENCE_FILTER` | strony dla kandydatów (`rekrutacja.us.edu.pl` i podobne) tylko przy pytaniach o rekrutację | `true` |

@@ -66,4 +66,5 @@ def build_chat_service(settings: Settings) -> ChatService:
                        top_k=settings.top_k, max_distance=settings.max_distance,
                        min_rerank_score=settings.min_rerank_score,
                        clarify_details=settings.clarify_details,
-                       slang_expansion=settings.slang_expansion)
+                       slang_expansion=settings.slang_expansion,
+                       prompt_max_tokens=settings.prompt_max_tokens)

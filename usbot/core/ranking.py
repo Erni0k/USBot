@@ -12,6 +12,7 @@ from datetime import date
 
 from usbot.core.models import Chunk
 from usbot.core.scope import is_old_news
+from usbot.core.tokens import estimated_tokens
 from usbot.ports import Reranker, Retriever
 
 RRF_K = 60  # stała w RRF: score = Σ 1/(RRF_K + pozycja)
@@ -159,19 +160,6 @@ def rerank(reranker: Reranker, queries: Sequence[str], chunks: list[Chunk]) -> l
 def section(chunk: Chunk) -> str:
     """Prefiks fragmentu „<tytuł strony> > <nagłówek sekcji>” (pierwsza linia treści)."""
     return chunk.content.partition("\n")[0]
-
-
-def estimated_tokens(text: str) -> float:
-    """Przybliżona liczba tokenów `text` w qwen3:8b, bez wywoływania modelu.
-
-    Współczynniki dopasowane do `prompt_eval_count` z Ollamy (docs/testy.md, 6.10). Liczba
-    znaków nie wystarcza: cyfry kosztują kilka razy więcej niż litery, więc kontekst tej
-    samej długości różni się o setki tokenów.
-    """
-    digits = sum(ch.isdigit() for ch in text)
-    letters = sum(ch.isalpha() for ch in text)
-    spaces = sum(ch.isspace() for ch in text)
-    return 0.27 * letters + 1.43 * digits + 0.53 * spaces + 0.66 * (len(text) - digits - letters - spaces)
 
 
 def with_neighbors(chunks: Sequence[Chunk], fetch: Callable[[list[int]], Sequence[Chunk]],

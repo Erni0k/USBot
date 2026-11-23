@@ -80,6 +80,7 @@ Status: ✅ — zaimplementowany (plik w kolumnie „Test”), ⏳ — planowany
 | T55 | Manualny | odpowiedzi bota na holdoucie | 40 nowych pytań (`evaluation/holdout.jsonl`), 3 przebiegi przed i po, ocena sensu na ślepo | Wyniki, diagnoza i decyzje w 6.10 | ✅ (2026-11-09) |
 | T56 | Jedn. + manualny | `HNSW_EF_SEARCH`, `foreign_content()`, `is_past_academic_year()` | Zaślepka i tekst angielski, cyrylica, polski tekst z angielskimi słowami; tytuły z latami akademickimi, rok w nagłówku sekcji; 159 pytań: indeks HNSW kontra pełny skan; `holdout2` (40 nowych pytań), 3 przebiegi przed i po | Filtry tylko z ustawieniem i dla pytań po polsku lub o bieżące zasady; recall@40 0,997 przy `ef_search` 400; wyniki i decyzje w 6.11 | ✅ `unit/test_ranking.py`, `unit/test_scope.py` (2026-11-22) |
 | T57 | Jedn. + manualny | `expand_slang()`, `ChatService(slang_expansion=True)` | Slang w różnych formach („pałę”, „komisa”, „dziekance”, „nieobek”, „wfie”); słowa urzędowe („warunek”, „komisja”, „urlop dziekański”); 32 pytania potoczne (`evaluation/potoczne.jsonl`), 3 przebiegi bez i ze słownikiem | Odpowiednik w nawiasie, najwyżej raz, tylko w zapytaniu do wyszukiwarki; słowa urzędowe bez zmian; wyniki w 6.12 | ✅ `unit/test_slang.py` (2026-11-23) |
+| T58 | Jedn. + manualny | `prompt_tokens()`, `fits()`, `ChatService.fit_prompt()`, `drop_order()` | Prompt ponad limitem z 5 fragmentami, z długą historią; komunikaty z różnych lat; pytanie o przeszłość; 264 prawdziwe prompty (licznik Ollamy) | Odpadają najpierw najstarsze komunikaty, potem najdalsze fragmenty, potem najstarsza historia; zostaje pierwszy fragment i ostatnie pytanie; źródła tylko z zostawionych; żaden prawdziwy prompt ponad 3300 tokenów | ✅ `unit/test_tokens.py` (2026-11-23) |
 | T35 | Manualny | API + Ollama | `curl -N` na `/api/chat`, przerwanie curla w trakcie, `/api/health`; `evaluation/latency.py` | Tokeny na bieżąco, źródła przed tokenami; w logu serwera „przerwano odpowiedź”; czasy w docs/api.md (3.2) | ✅ (2026-11-04) |
 
 ## 6.3 Instrukcja uruchomienia testów
@@ -1968,3 +1969,52 @@ Pozostałe błędy na pytaniach potocznych, niezwiązane ze slangiem:
 
 **Decyzja: `SLANG_EXPANSION=true` domyślnie.** Słownik warto rozszerzać na podstawie prawdziwych
 pytań z dziennika rozmów i ocen 👎 (6.6), a każde rozszerzenie sprawdzać na nowych pytaniach.
+
+## 6.13 Limit długości promptu
+
+2026-11-23, konfiguracja z 6.12. Ollama przez `/v1/chat/completions` ignoruje `num_ctx`, więc
+prompt i odpowiedź mieszczą się razem w 4096 tokenach. Za długi prompt zostawia mało miejsca na
+odpowiedź i ją ucina.
+
+**Pomiar.** 264 prawdziwe prompty (pytania z `golden_80`, obu holdoutów, zestawu potocznego i
+z 6.7 oraz 19 rozmów dwuturowych), licznik `prompt_eval_count` z Ollamy (`num_ctx` podniesiony
+tylko do pomiaru): mediana 2822 tokeny, najdłuższy 3640, ponad 3300 — 24, ponad 3500 — 8.
+Najdłuższy zostawiał 456 tokenów na odpowiedź, a najdłuższe odpowiedzi w pomiarach mają do 765.
+Szacunek z 6.10 liczony dla całego promptu zaniżał średnio o 154 tokeny; po dopasowaniu
+(`usbot/core/tokens.py`: 1,024 · szacunek treści + 16 na wiadomość + 72) średni błąd to
+63 tokeny, największe zaniżenie 183 (zapas `PROMPT_MARGIN` = 190).
+
+**Zmiana.** `ChatService.fit_prompt()` (`PROMPT_MAX_TOKENS=3300`): dopóki prompt z zapasem się
+nie mieści, odpada jeden fragment (zawsze zostaje pierwszy), a potem najstarsze tury historii
+(zostaje ostatnie pytanie). Lista źródeł powstaje po przycięciu. Kolejność fragmentów
+(`drop_order()`): przy pytaniach o bieżące zasady najpierw najstarszy komunikat lub wydarzenie,
+w pozostałych przypadkach najdalszy fragment.
+
+| Limit | Przycięte prompty (z 264) | Najmniejszy zapas na odpowiedź |
+|---|---|---|
+| 3200 | 82 | 896 |
+| **3300** | **54** | **796** |
+| 3400 | 32 | 696 |
+| 3500 | 16 | 596 |
+
+Po wdrożeniu najdłuższy prawdziwy prompt ma 3242 tokeny (licznik Ollamy), żaden nie przekracza
+3300; na odpowiedź zostaje co najmniej 854 tokeny.
+
+**Pierwsza wersja odcinała najdalszy fragment i pogorszyła h25** („Jaki jest próg dochodu do
+stypendium socjalnego?”): odpadł najnowszy komunikat „Świadczenia… 2026/2027” (2099,70 zł), a
+zostały starsze z 2024/2025 (1570,50 zł), które model podał we wszystkich przebiegach. Stąd
+kolejność według daty komunikatu.
+
+| Zestaw (3 przebiegi) | Bez limitu | Limit, najdalszy fragment | **Limit, najstarszy komunikat** |
+|---|---|---|---|
+| `tuning` | 29,0 / 1,0 | 29,3 / 1,0 | 29,0 (28–30) / 1,0 |
+| holdout 6.10 | 27,0 / 1,0 | 26,0 / 1,0 | 27,7 (27–28) / 1,0 |
+| pytania potoczne | 17,7 / 2,0 | 17,3 / 2,0 | 17,7 (17–18) / 2,0 |
+| 6.7: spoza / w zakresie odrzucone | 20/22 / 1/57 | 21/22 / 1/57 | 21/22 / 1/57 |
+| 6.7: URL-e spoza kontekstu | 0/101 | 0/89 | 0/92 |
+
+(zaliczone automatycznie / niesłuszne odmowy). Różnice w granicach rozrzutu, h25 znów poprawne
+we wszystkich przebiegach. Pomiarów holdoutu z 6.10 użyto do strojenia kolejności, więc ten
+wiersz nie jest niezależny. **Decyzja: `PROMPT_MAX_TOKENS=3300` domyślnie.** Limit poprawia
+odporność (koniec urywanych odpowiedzi), a nie trafność; przy innym modelu lub kontekście
+współczynniki w `usbot/core/tokens.py` trzeba zmierzyć od nowa.

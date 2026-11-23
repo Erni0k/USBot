@@ -63,7 +63,8 @@ def build_resources(settings: Settings) -> Resources:
                           min_rerank_score=settings.min_rerank_score,
                           max_history_turns=settings.api_history_turns,
                           clarify_details=settings.clarify_details,
-                          slang_expansion=settings.slang_expansion)
+                          slang_expansion=settings.slang_expansion,
+                          prompt_max_tokens=settings.prompt_max_tokens)
 
     timeout = settings.health_timeout
     checks: dict[str, HealthCheck] = {
