@@ -17,7 +17,8 @@ from collections.abc import Callable, Iterator, Sequence
 from datetime import date
 from typing import Literal, TypedDict
 
-from usbot.core.citations import CitationFilter, source_numbers, sources_footer, without_citations
+from usbot.core.citations import (CitationFilter, is_outdated, outdated_note, source_numbers,
+                                  sources_footer, without_citations)
 from usbot.core.clarify import needs_detail
 from usbot.core.faculties import CLARIFY_MESSAGE, expand_faculties, faculty_options, needs_faculty
 from usbot.core.models import Chunk, Message
@@ -35,6 +36,7 @@ class Source(TypedDict):
     published_at: str | None   # ISO 8601
     dist: float
     rerank: float | None
+    outdated: bool             # komunikat lub wydarzenie sprzed ponad roku
 
 
 class FacultyOption(TypedDict):
@@ -89,7 +91,7 @@ def cutoff(chunks: Sequence[Chunk], max_distance: float | None,
     return [c for c in chunks if keep(c)]
 
 
-def sources(chunks: Sequence[Chunk]) -> list[Source]:
+def sources(chunks: Sequence[Chunk], today: date) -> list[Source]:
     """Strony z wyników, każda raz (z najlepszego fragmentu), w kolejności wyników."""
     out: dict[str, Source] = {}
     for c in chunks:
@@ -97,7 +99,7 @@ def sources(chunks: Sequence[Chunk]) -> list[Source]:
             out[c.url] = {
                 "url": c.url, "title": c.title, "page_type": c.page_type,
                 "published_at": c.published_at.isoformat() if c.published_at else None,
-                "dist": float(c.dist), "rerank": c.rerank,
+                "dist": float(c.dist), "rerank": c.rerank, "outdated": is_outdated(c, today),
             }
     return list(out.values())
 
@@ -210,7 +212,7 @@ class ChatService:
             return
 
         chunks, prompt = self.fit_prompt(chunks, without_citations(messages))
-        yield {"type": "sources", "sources": sources(chunks)}
+        yield {"type": "sources", "sources": sources(chunks, self.today())}
         numbers = source_numbers(chunks)
         citations = CitationFilter(len(numbers))
         parts: list[str] = []
@@ -218,7 +220,9 @@ class ChatService:
             if text := citations.feed(raw):
                 parts.append(text)
                 yield {"type": "token", "text": text}
-        if text := citations.flush() + sources_footer(citations.cited, numbers):
+        note = ("" if asks_about_past(question, self.today())
+                else outdated_note(citations.cited, numbers, chunks, self.today()))
+        if text := citations.flush() + note + sources_footer(citations.cited, numbers):
             parts.append(text)
             yield {"type": "token", "text": text}
         yield {"type": "done", "answer": "".join(parts)}

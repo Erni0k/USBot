@@ -148,6 +148,8 @@ def test_odleglosc_tuz_ponizej_zera_jest_poprawna():
     ({"sources": [{**SOURCE, "url": "http://us.edu.pl/"}]}, "sources"),
     ({"sources": [{**SOURCE, "url": "javascript:alert(1)//us.edu.pl"}]}, "sources"),
     ({"sources": [{**SOURCE, "url": "https://us.edu.pl/\x00"}]}, "sources"),
+    ({"sources": [{**SOURCE, "url": "faq://f10#https://evil.example/"}]}, "sources"),
+    ({"sources": [{**SOURCE, "url": "faq://F 10"}]}, "sources"),
 ])
 def test_niepoprawna_ocena_422(overrides, field):
     store = FakeStore()
@@ -304,3 +306,10 @@ def test_raport_zlicza_odsetek_i_tematy():
 
 def test_raport_bez_ocen():
     assert script("feedback_report").render([], [], "week", 10) == "Brak ocen w bazie."
+
+
+def test_wpis_faq_jako_zrodlo_oceny():
+    # Odpowiedź cytująca FAQ ma źródło faq://<id>[#strona]; ocena nie może dostać 422
+    with client(FakeStore()) as c:
+        for url in ("faq://f05", "faq://f10#https://us.edu.pl/student/komunikaty/podania/"):
+            assert c.post("/api/feedback", json=body(sources=[{**SOURCE, "url": url}])).status_code == 204

@@ -31,6 +31,11 @@ export function SourceList({ sources, id }: { sources: Source[]; id: string }) {
               {s.published_at && (
                 <time dateTime={s.published_at}>z {formatDate(s.published_at)}</time>
               )}
+              {s.outdated && (
+                <span className="source-tag source-tag-old" title="Opublikowane ponad rok temu — informacje mogą być nieaktualne">
+                  może być nieaktualne
+                </span>
+              )}
             </span>
           </li>
         ))}

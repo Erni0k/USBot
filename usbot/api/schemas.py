@@ -4,6 +4,7 @@ Limity długości (API_MAX_MESSAGE_CHARS, API_MAX_HISTORY_MESSAGES, API_MAX_HIST
 zależą od ustawień, więc sprawdza je `check_limits()` po walidacji kształtu żądania —
 przekroczenie daje ten sam błąd 422 co niepoprawne pole.
 """
+import re
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -15,6 +16,8 @@ from usbot.config import Settings
 # Źródła pochodzą wyłącznie z crawla tych serwisów (ALLOWED_DOMAINS w ingestion/scrape.py);
 # adresy z ocen ogląda potem człowiek przy oznaczaniu, więc obcych linków nie przyjmujemy.
 _SOURCE_DOMAIN = "us.edu.pl"
+# Wpis FAQ jako źródło: faq://<id> albo faq://<id>#<strona uczelni> (usbot/core/citations.py)
+_FAQ_SOURCE = re.compile(r"faq://[a-z0-9-]{1,20}(?:#(.+))?")
 MAX_FEEDBACK_SOURCES = 50
 
 
@@ -73,6 +76,10 @@ class FeedbackSource(BaseModel):
     @field_validator("url")
     @classmethod
     def _university_url(cls, v: str) -> str:
+        if faq := _FAQ_SOURCE.fullmatch(v):
+            if faq[1]:
+                cls._university_url(faq[1])
+            return v
         parts = urlsplit(v)
         host = (parts.hostname or "").lower()
         if (parts.scheme != "https" or parts.username or parts.password or v != v.strip()

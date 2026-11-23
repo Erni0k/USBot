@@ -81,6 +81,7 @@ Status: ✅ — zaimplementowany (plik w kolumnie „Test”), ⏳ — planowany
 | T56 | Jedn. + manualny | `HNSW_EF_SEARCH`, `foreign_content()`, `is_past_academic_year()` | Zaślepka i tekst angielski, cyrylica, polski tekst z angielskimi słowami; tytuły z latami akademickimi, rok w nagłówku sekcji; 159 pytań: indeks HNSW kontra pełny skan; `holdout2` (40 nowych pytań), 3 przebiegi przed i po | Filtry tylko z ustawieniem i dla pytań po polsku lub o bieżące zasady; recall@40 0,997 przy `ef_search` 400; wyniki i decyzje w 6.11 | ✅ `unit/test_ranking.py`, `unit/test_scope.py` (2026-11-22) |
 | T57 | Jedn. + manualny | `expand_slang()`, `ChatService(slang_expansion=True)` | Slang w różnych formach („pałę”, „komisa”, „dziekance”, „nieobek”, „wfie”); słowa urzędowe („warunek”, „komisja”, „urlop dziekański”); 32 pytania potoczne (`evaluation/potoczne.jsonl`), 3 przebiegi bez i ze słownikiem | Odpowiednik w nawiasie, najwyżej raz, tylko w zapytaniu do wyszukiwarki; słowa urzędowe bez zmian; wyniki w 6.12 | ✅ `unit/test_slang.py` (2026-11-23) |
 | T58 | Jedn. + manualny | `prompt_tokens()`, `fits()`, `ChatService.fit_prompt()`, `drop_order()` | Prompt ponad limitem z 5 fragmentami, z długą historią; komunikaty z różnych lat; pytanie o przeszłość; 264 prawdziwe prompty (licznik Ollamy) | Odpadają najpierw najstarsze komunikaty, potem najdalsze fragmenty, potem najstarsza historia; zostaje pierwszy fragment i ostatnie pytanie; źródła tylko z zostawionych; żaden prawdziwy prompt ponad 3300 tokenów | ✅ `unit/test_tokens.py` (2026-11-23) |
+| T59 | Jedn. (+ frontend) | `is_outdated()`, `outdated_note()`, `ChatService`, `SourceList`, `FeedbackSource` | Komunikaty i wydarzenia sprzed ponad roku i z bieżącego roku, strona informacyjna ze starą datą; jedno i kilka cytowanych starych źródeł; pytanie o przeszłość; odpowiedź z ostrzeżeniem w historii; ocena ze źródłem `faq://` | Ostrzeżenie przed stopką tylko dla cytowanych starych komunikatów, bez niego przy pytaniu o przeszłość; usuwane z historii; `outdated` w źródłach i znacznik na liście; wpis FAQ (także z obcą stroną po `#` — odrzucany) w ocenie | ✅ `unit/test_outdated.py`, `unit/test_feedback.py`, `web/src/components/SourceList.test.tsx` |
 | T35 | Manualny | API + Ollama | `curl -N` na `/api/chat`, przerwanie curla w trakcie, `/api/health`; `evaluation/latency.py` | Tokeny na bieżąco, źródła przed tokenami; w logu serwera „przerwano odpowiedź”; czasy w docs/api.md (3.2) | ✅ (2026-11-04) |
 
 ## 6.3 Instrukcja uruchomienia testów
@@ -2018,3 +2019,41 @@ we wszystkich przebiegach. Pomiarów holdoutu z 6.10 użyto do strojenia kolejno
 wiersz nie jest niezależny. **Decyzja: `PROMPT_MAX_TOKENS=3300` domyślnie.** Limit poprawia
 odporność (koniec urywanych odpowiedzi), a nie trafność; przy innym modelu lub kontekście
 współczynniki w `usbot/core/tokens.py` trzeba zmierzyć od nowa.
+
+## 6.14 Ostrzeżenie o starych źródłach
+
+2026-11-23. Prompt każe modelowi przy komunikatach sprzed bieżącego roku akademickiego podawać
+rok i odsyłać po aktualne dane (2.1), ale model robi to nieregularnie: w h06 podawał dni wolne
+z komunikatu z 2021 r. jako obecne, a w „Kiedy mamy wolne?” (g67) — z lat 2016–2018.
+
+**Zmiana (bez LLM-a).** Gdy odpowiedź cytuje komunikat lub wydarzenie opublikowane ponad rok
+temu (`is_outdated()`, `OUTDATED_DAYS` = 365), kod dopisuje przed stopką źródeł:
+„**Uwaga:** źródło [2] (komunikat z 22 marca 2024 r.) ma ponad rok, więc informacje mogą być
+nieaktualne. Sprawdź je na us.edu.pl.” Przy pytaniu o przeszłość (`asks_about_past()`)
+ostrzeżenia nie ma. Ostrzeżenie jest usuwane z historii, jak stopka. Zdarzenie `sources` ma
+pole `outdated`, a lista źródeł we frontendzie pokazuje przy takim źródle znacznik „może być
+nieaktualne”. Daty stron informacyjnych to daty utworzenia (np. 2019), więc ich nie liczymy.
+
+Pierwsza wersja liczyła granicę od początku bieżącego roku akademickiego; oznaczyłaby też
+aktualny komunikat o naborze do akademików na 2026/2027 z lipca 2026 r. (k16), stąd „ponad rok”.
+
+**Jak często.** Na zapisanych odpowiedziach z 6.13 (pierwszy przebieg; źródła z bazy):
+
+| Zestaw | Odpowiedzi z ostrzeżeniem |
+|---|---|
+| holdout 6.10 | 7/40 |
+| `holdout2` | 3/40 |
+| pytania potoczne | 2/32 |
+| `tuning` | 7/40 |
+| razem | 19/152 (12%) |
+
+Ostrzeżenie dostają głównie odpowiedzi oparte na nieaktualnych albo nietrafionych źródłach:
+dni wolne z lat 2016–2018 (g67), komunikat z 2021 r. (h06), list rektora z 2020 r. (h31, g64),
+rekrutacje 2017–2018 (g07). Także przewodnik dla pierwszego roku 2024/2025 (h03, h16, g09) —
+najnowszy w bazie, ale rzeczywiście sprzed ponad roku. Treść odpowiedzi się nie zmienia, więc
+pomiar trafności nie był potrzebny.
+
+**Przy okazji: oceny odpowiedzi z wpisem FAQ.** `POST /api/feedback` przyjmował tylko adresy
+`https://…us.edu.pl`, więc ocena odpowiedzi cytującej FAQ (`faq://f05`, od 6.10) kończyła się
+błędem 422 i nie była zapisywana. Teraz przyjmuje `faq://<id>` i `faq://<id>#<strona>`, a
+strona po `#` musi spełniać te same warunki co zwykłe źródło.

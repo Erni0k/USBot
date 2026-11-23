@@ -24,6 +24,13 @@ describe("SourceList", () => {
     expect(out).toContain("Tytuł");
   });
 
+  it("stary komunikat ma znacznik, aktualny nie", () => {
+    const old = renderToStaticMarkup(
+      <SourceList sources={[{ ...source("https://us.edu.pl/k"), page_type: "news", outdated: true }]} id="t" />);
+    expect(old).toContain("może być nieaktualne");
+    expect(html("https://us.edu.pl/k")).not.toContain("może być nieaktualne");
+  });
+
   it("zwykła strona linkuje do swojego adresu", () => {
     expect(html("https://us.edu.pl/b")).toContain('href="https://us.edu.pl/b"');
   });

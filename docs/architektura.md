@@ -102,7 +102,7 @@ klient. Każde zdarzenie to słownik gotowy do serializacji JSON:
 
 | Zdarzenie | Kiedy | Pola |
 |---|---|---|
-| `sources` | fragmenty przeszły próg, zaraz zostanie wywołany LLM | `sources`: strony z wyników wyszukiwania (każdy URL raz, z najlepszego fragmentu): `url`, `title`, `page_type`, `published_at`, `dist`, `rerank` |
+| `sources` | fragmenty przeszły próg, zaraz zostanie wywołany LLM | `sources`: strony z wyników wyszukiwania (każdy URL raz, z najlepszego fragmentu): `url`, `title`, `page_type`, `published_at`, `dist`, `rerank`, `outdated` (komunikat lub wydarzenie sprzed ponad roku) |
 | `token` | kolejny kawałek odpowiedzi LLM-a | `text` |
 | `refused` | żaden fragment nie przeszedł progu — bez wywołania LLM-a | `message` (stały tekst „Nie mam tej informacji…”) |
 | `clarify` | pytanie o dziekanat, a w 3 ostatnich pytaniach nie padł wydział; przy `CLARIFY_DETAILS=true` także pytanie o nieobecności lub brak oceny bez przedmiotu albo o konto bez systemu — bez wywołania LLM-a | `message`, `options`: `[{"code": "WNP", "name": "Wydział Nauk Przyrodniczych"}, …]` (przy przedmiocie pusta lista) |

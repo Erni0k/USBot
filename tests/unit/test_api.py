@@ -75,7 +75,7 @@ def test_chat_strumien_zrodla_tokeny_done():
     sources = events[0]["sources"]
     assert [s["url"] for s in sources] == [WNP, EDUROAM]  # każda strona raz, z wyszukiwania
     assert sources[0] == {"url": WNP, "title": "Dziekanat WNP", "page_type": "student",
-                          "published_at": None, "dist": 0.30, "rerank": None}
+                          "published_at": None, "dist": 0.30, "rerank": None, "outdated": False}
     text = "".join(e["text"] for e in events if e["type"] == "token")
     assert events[-1] == {"type": "done", "answer": text}
 

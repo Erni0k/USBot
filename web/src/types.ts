@@ -7,6 +7,8 @@ export interface Source {
   published_at: string | null;
   dist: number;
   rerank: number | null;
+  /** Komunikat lub wydarzenie opublikowane ponad rok temu. */
+  outdated?: boolean;
 }
 
 export interface FacultyOption {

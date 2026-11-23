@@ -86,7 +86,7 @@ data: {"type":"done","answer":"Aby połączyć się z siecią eduroam…"}
 
 | Zdarzenie | Kiedy | Pola |
 |---|---|---|
-| `sources` | fragmenty przeszły próg; zaraz popłyną tokeny | `sources`: lista stron (każda raz, w kolejności wyników) — `url`, `title`, `page_type`, `published_at` (ISO 8601 albo `null`), `dist` (odległość kosinusowa), `rerank` (wynik rerankera albo `null`) |
+| `sources` | fragmenty przeszły próg; zaraz popłyną tokeny | `sources`: lista stron (każda raz, w kolejności wyników) — `url`, `title`, `page_type`, `published_at` (ISO 8601 albo `null`), `dist` (odległość kosinusowa), `rerank` (wynik rerankera albo `null`), `outdated` (`true` dla komunikatu lub wydarzenia sprzed ponad roku) |
 | `token` | kolejny kawałek odpowiedzi LLM-a | `text` |
 | `refused` | nic nie przeszło progu — bez wywołania LLM-a | `message` (stały tekst „Nie mam tej informacji…”) |
 | `clarify` | pytanie o dziekanat bez wydziału, a przy `CLARIFY_DETAILS=true` także o nieobecności lub brak oceny bez przedmiotu i o niedziałające konto bez systemu — bez wywołania LLM-a | `message` (pytanie dopytujące), `options`: `[{"code", "name"}]` — przy wydziałach jak w `/api/faculties`, przy systemie lista systemów (`code` = `name`), przy przedmiocie pusta (odpowiedź tekstem) |
@@ -184,7 +184,7 @@ Ocena jednej odpowiedzi. Serwer jest bezstanowy, więc treść przysyła klient:
 | `question` | string | 1–`API_MAX_MESSAGE_CHARS` (2000) znaków, nie same spacje |
 | `answer` | string | 1–`API_MAX_FEEDBACK_ANSWER_CHARS` (20 000) znaków |
 | `rating` | `1` / `-1` | inne wartości → `422` |
-| `sources` | lista, domyślnie `[]` | najwyżej 50; `url`: `https://` w domenie `us.edu.pl` lub jej subdomenie; `dist`: 0–2; `rerank`: 0–1 albo `null` |
+| `sources` | lista, domyślnie `[]` | najwyżej 50; `url`: `https://` w domenie `us.edu.pl` lub jej subdomenie albo wpis FAQ `faq://<id>[#<strona uczelni>]`; `dist`: 0–2; `rerank`: 0–1 albo `null` |
 | `comment` | string / `null` | opcjonalny, najwyżej `API_MAX_FEEDBACK_COMMENT_CHARS` (500) znaków |
 | `followup` | bool, domyślnie `false` | `true`, gdy pytanie zadano z historią rozmowy |
 

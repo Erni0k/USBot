@@ -6,6 +6,7 @@ spoza kontekstu jest usuwany ze strumienia, a adres zawsze pochodzi z wyników w
 """
 import re
 from collections.abc import Sequence
+from datetime import date
 
 from usbot.core.models import Chunk, Message
 
@@ -16,6 +17,13 @@ _CITATION = re.compile(r"\[\s*(\d{1,2}(?:\s*,\s*\d{1,2})*)\s*\]")
 _OPEN_CITATION = re.compile(r"\[[\d\s,]*$")
 _FOOTER = re.compile(rf"\n*{FOOTER_HEADING}\n(?:\[\d+\] [^\n]+\n?)+\s*$")
 _ANY_CITATION = re.compile(r" ?\[\d{1,2}(?:, ?\d{1,2})*\]")
+OUTDATED_HEADING = "**Uwaga:**"
+_OUTDATED_NOTE = re.compile(r"\n*\*\*Uwaga:\*\* [^\n]*nieaktualne[^\n]*\s*$")
+_MONTHS = ("stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca", "lipca", "sierpnia",
+           "września", "października", "listopada", "grudnia")
+_KINDS = {"news": "komunikat", "event": "wydarzenie"}
+# Od ilu dni komunikat w odpowiedzi dostaje ostrzeżenie
+OUTDATED_DAYS = 365
 
 
 FAQ_SCHEME = "faq://"
@@ -75,9 +83,45 @@ def sources_footer(cited: Sequence[int], numbers: dict[str, int]) -> str:
     return f"\n\n{FOOTER_HEADING}\n" + "\n".join(lines) if lines else ""
 
 
+def is_outdated(chunk: Chunk, today: date) -> bool:
+    """Komunikat albo wydarzenie opublikowane ponad rok temu.
+
+    Granica „sprzed bieżącego roku akademickiego” oznaczałaby też aktualne komunikaty z lata
+    (nabór do akademików na nowy rok). Daty stron informacyjnych to daty utworzenia, więc ich
+    nie liczymy.
+    """
+    return (chunk.page_type in _KINDS and chunk.published_at is not None
+            and (today - chunk.published_at.date()).days > OUTDATED_DAYS)
+
+
+def outdated_note(cited: Sequence[int], numbers: dict[str, int], chunks: Sequence[Chunk],
+                  today: date) -> str:
+    """Ostrzeżenie dopisywane przed stopką, gdy odpowiedź cytuje stare komunikaty.
+
+    Prompt każe modelowi podawać rok takich komunikatów, ale robi to nieregularnie
+    (docs/testy.md, 6.14), więc ostrzeżenie dopisuje kod. Pusty tekst, gdy nic starego.
+    """
+    by_url = {}
+    for c in chunks:
+        by_url.setdefault(c.url, c)
+    urls = {n: url for url, n in numbers.items()}
+    old = [(n, by_url[urls[n]]) for n in sorted(cited) if is_outdated(by_url[urls[n]], today)]
+    if not old:
+        return ""
+
+    def describe(n: int, c: Chunk) -> str:
+        d = c.published_at.date()
+        return f"[{n}] ({_KINDS[c.page_type]} z {d.day} {_MONTHS[d.month - 1]} {d.year} r.)"
+
+    subject = (f"źródło {describe(*old[0])} ma" if len(old) == 1
+               else "źródła " + ", ".join(describe(*o) for o in old) + " mają")
+    return (f"\n\n{OUTDATED_HEADING} {subject} ponad rok, więc informacje mogą być nieaktualne. "
+            "Sprawdź je na us.edu.pl.")
+
+
 def without_citations(history: Sequence[Message]) -> list[Message]:
     """Historia dla LLM-a bez numerów i stopki: numery z poprzedniej tury znaczą co innego."""
     def clean(text: str) -> str:
-        return _ANY_CITATION.sub("", _FOOTER.sub("", text)).strip()
+        return _ANY_CITATION.sub("", _OUTDATED_NOTE.sub("", _FOOTER.sub("", text))).strip()
 
     return [{**m, "content": clean(m["content"])} if m["role"] == "assistant" else m for m in history]

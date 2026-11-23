@@ -119,9 +119,9 @@ def test_kontekst_wiadomosci_i_strumien_zdarzen():
     # źródła z wyników wyszukiwania: każda strona raz, z najlepszego fragmentu
     assert evs[0]["sources"] == [
         {"url": EDUROAM, "title": "Eduroam", "page_type": "static", "published_at": None,
-         "dist": 0.25, "rerank": None},
+         "dist": 0.25, "rerank": None, "outdated": False},
         {"url": WNP, "title": None, "page_type": "static", "published_at": None,
-         "dist": 0.35, "rerank": None},
+         "dist": 0.35, "rerank": None, "outdated": False},
     ]
     assert [e["text"] for e in evs[1:3]] == ["Skonfiguruj ", "eduroam."]
     assert evs[-1] == {"type": "done", "answer": "Skonfiguruj eduroam."}

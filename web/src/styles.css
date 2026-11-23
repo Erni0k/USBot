@@ -629,6 +629,11 @@ a {
   border: 1px solid var(--border);
   border-radius: 0.25rem;
 }
+.source-tag-old {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--text);
+}
 
 /* ---------- oceny ---------- */
 

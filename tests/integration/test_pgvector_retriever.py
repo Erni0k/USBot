@@ -115,7 +115,7 @@ def test_chat_service_na_prawdziwej_bazie(retriever):
     evs = list(svc.stream(Q_EDUROAM))
     assert evs[0] == {"type": "sources", "sources": [
         {"url": EDUROAM_URL, "title": "Eduroam", "page_type": "static", "published_at": None,
-         "dist": pytest.approx(0, abs=1e-5), "rerank": None}]}
+         "dist": pytest.approx(0, abs=1e-5), "rerank": None, "outdated": False}]}
     assert "Krok 1: wybierz sieć eduroam" in llm.calls[0][0]["content"]
 
     assert list(svc.stream(Q_POGODA)) == [{"type": "refused", "message": NO_INFO},
