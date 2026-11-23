@@ -1,5 +1,6 @@
 // Test E2E i zrzuty ekranu czatu przez Chrome DevTools Protocol (bez zależności).
-// Wymaga działającego API i `npm run dev`. Wysyła ~6 pytań do API (limit 10/min).
+// Wymaga działającego API i `npm run dev`. Wysyła ~6 pytań do API (limit 10/min); scenariusze
+// cytowań, błędu i limitu dostają podstawioną odpowiedź (Fetch.fulfillRequest), więc są powtarzalne.
 //   npm run e2e                         → zrzuty do ../docs/img/ui
 //   node scripts/e2e.mjs <katalog> [scenariusz...]   np. clarify stop
 // Zmienne: CHROME (ścieżka do Chrome/Edge), WEB_URL (domyślnie http://localhost:5173/).
@@ -87,7 +88,9 @@ const shot = async (name) => {
   console.log("  zrzut:", name);
 };
 const key = async (k, code, keyCode, modifiers = 0) => {
-  await send("Input.dispatchKeyEvent", { type: "keyDown", key: k, code, windowsVirtualKeyCode: keyCode, modifiers });
+  // Enter z `text` — inaczej przycisk nie dostaje kliknięcia z klawiatury
+  const text = k === "Enter" && !(modifiers & 8) ? "\r" : undefined;
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: k, code, windowsVirtualKeyCode: keyCode, modifiers, text });
   await send("Input.dispatchKeyEvent", { type: "keyUp", key: k, code, windowsVirtualKeyCode: keyCode, modifiers });
 };
 const ask = async (text) => {
@@ -106,6 +109,35 @@ const newChat = async () => {
   await evaluate(`[...document.querySelectorAll('button')].find(b=>b.textContent==='Nowa rozmowa')?.click()`);
   await sleep(200);
 };
+const openSettings = () =>
+  evaluate(`[...document.querySelectorAll('.header button')].find(b=>b.textContent.startsWith('Ustawienia')).click()`);
+// Podstawiona odpowiedź /api/chat (Fetch domain); zwraca funkcję wyłączającą podmianę
+const intercept = async (respond) => {
+  await send("Fetch.enable", { patterns: [{ urlPattern: "*/api/chat", requestStage: "Request" }] });
+  const handler = (m) => {
+    if (m.method === "Fetch.requestPaused") respond(m.params.requestId);
+  };
+  listeners.push(handler);
+  return async () => {
+    listeners.splice(listeners.indexOf(handler), 1);
+    await send("Fetch.disable");
+  };
+};
+const sse = (events) => events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
+// Odpowiedź w formacie serwera (usbot/core/citations.py): numery [n], ostrzeżenie o starym
+// komunikacie i lista „Źródła:” w ostatnim tokenie. Źródła jak w odpowiedzi API z 2026-11-24.
+const CITED_SOURCES = [
+  { url: "https://us.edu.pl/student/wsparcie-i-fundusze/swiadczenia-stypendia-i-zapomoga/stypendium-socjalne", title: "stypendium socjalne | Student", page_type: "student", published_at: "2019-11-01T20:46:49+00:00", dist: 0.234, rerank: null, outdated: false },
+  { url: "faq://f12#https://us.edu.pl/student/wsparcie-i-fundusze/swiadczenia-stypendia-i-zapomoga", title: "FAQ: Do kiedy składa się wniosek o stypendium socjalne?", page_type: "faq", published_at: null, dist: 0.25, rerank: null, outdated: false },
+  { url: "https://us.edu.pl/student/komunikaty/swiadczenia-dla-studentow-w-semestrze-letnim-roku-akademickiego-2024-2025", title: "Świadczenia dla studentów w semestrze letnim roku akademickiego 2024/2025 | Student", page_type: "news", published_at: "2025-03-24T09:03:35+00:00", dist: 0.297, rerank: null, outdated: true },
+  { url: "https://us.edu.pl/student/komunikaty/swiadczenia-dla-studentow-w-semestrze-letnim-roku-akademickiego-2025-2026", title: "Świadczenia dla studentów w semestrze zimowym roku akademickiego 2026/2027 | Student", page_type: "news", published_at: "2026-11-02T09:11:35+00:00", dist: 0.305, rerank: null, outdated: false },
+];
+const CITED_TOKENS = [
+  "Próg dochodu uprawniający do stypendium socjalnego wynosi **2099,70 zł** netto na osobę w rodzinie [4]. ",
+  "Wniosek składa się w USOSweb do 10. dnia miesiąca [2]. We wcześniejszym komunikacie podawano inną kwotę [3].",
+  "\n\n**Uwaga:** źródło [3] (komunikat z 24 marca 2025 r.) ma ponad rok, więc informacje mogą być nieaktualne. Sprawdź je na us.edu.pl." +
+    `\n\nŹródła:\n[2] FAQ (wpis sprawdzony ręcznie): https://us.edu.pl/student/wsparcie-i-fundusze/swiadczenia-stypendia-i-zapomoga\n[3] ${CITED_SOURCES[2].url}\n[4] ${CITED_SOURCES[3].url}`,
+];
 const failures = [];
 const check = (cond, msg) => {
   console.log((cond ? "  OK   " : "  FAIL ") + msg);
@@ -143,12 +175,40 @@ const scenarios = {
     await evaluate(`(()=>{const t=document.getElementById('question');const s=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;s.call(t,'');t.dispatchEvent(new Event('input',{bubbles:true}))})()`);
     const order = [];
     await evaluate(`document.body.focus(); document.activeElement.blur()`);
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 16; i++) {
       await key("Tab", "Tab", 9);
       order.push(await evaluate(`(e=>e.id||e.getAttribute('aria-label')||e.textContent.trim().slice(0,30))(document.activeElement)`));
     }
     console.log("  kolejność Tab:", order.join(" → "));
     check(order.includes("question"), "pole pytania osiągalne Tabem");
+  },
+  async examples() {
+    await viewport(1280, 860);
+    await load();
+    await newChat();
+    check((await evaluate(`document.querySelectorAll('.welcome .example').length`)) === 8, "powitanie: 8 przykładowych pytań");
+    const groups = await evaluate(`[...document.querySelectorAll('.example-group h4')].map(h=>h.textContent).join(', ')`);
+    check(groups === "Dziekanat, USOSweb, Stypendia, Akademiki, Sieć i konta", "powitanie: grupy " + groups);
+    check(!(await evaluate(`/mogę (Ci )?pomóc/i.test(document.body.innerText)`)), "powitanie: bez „W czym mogę pomóc”");
+  },
+  async settings() {
+    await viewport(1280, 860);
+    await load();
+    check(await evaluate(`document.querySelector('.settings-panel').hidden`), "ustawienia: panel zamknięty na starcie");
+    await evaluate(`document.querySelector('.settings > button').focus()`);
+    await key("Enter", "Enter", 13);
+    await sleep(150);
+    check(!(await evaluate(`document.querySelector('.settings-panel').hidden`)), "ustawienia: Enter otwiera panel");
+    check((await evaluate(`document.querySelector('.settings > button').getAttribute('aria-expanded')`)) === "true", "ustawienia: aria-expanded=true");
+    await evaluate(`[...document.querySelectorAll('.settings-panel input')].find(i=>i.value==='dark').click()`);
+    await sleep(150);
+    check((await evaluate(`document.documentElement.dataset.theme`)) === "dark", "ustawienia: motyw ciemny");
+    await shot("13-ustawienia");
+    await key("Escape", "Escape", 27);
+    await sleep(150);
+    check(await evaluate(`document.querySelector('.settings-panel').hidden`), "ustawienia: Esc zamyka panel");
+    check(await evaluate(`document.activeElement === document.querySelector('.settings > button')`), "ustawienia: fokus wraca na przycisk");
+    await evaluate(`localStorage.removeItem('usbot.theme'); delete document.documentElement.dataset.theme`);
   },
   async answer() {
     await viewport(1280, 860);
@@ -158,7 +218,7 @@ const scenarios = {
     await ask("Jak połączyć się z siecią eduroam?");
     await waitFor(`!!document.querySelector('.indicator')`, 5000).catch(() => {});
     check(await evaluate(`!!document.querySelector('.button.stop')`), "w trakcie: przycisk Zatrzymaj");
-    await waitFor(`!!document.querySelector('.cursor')`, 60000);
+    await waitFor(`!!document.querySelector('.answer') && !!document.querySelector('.indicator')`, 60000);
     await sleep(1500);
     await shot("02-strumieniowanie");
     await waitIdle();
@@ -166,15 +226,75 @@ const scenarios = {
     const n = await evaluate(`document.querySelectorAll('.source-card').length`);
     check(n > 0, `karty źródeł: ${n}`);
     check(await evaluate(`[...document.querySelectorAll('.source-card a')].every(a=>a.href.startsWith('http'))`), "źródła mają linki");
-    check(await evaluate(`document.querySelectorAll('.feedback button[disabled]').length === 2`), "oceny wyłączone bez endpointu");
+    check(!(await evaluate(`document.querySelector('.answer').innerText.includes('Źródła:')`)), "lista „Źródła:” nie dubluje się w tekście");
+    check((await evaluate(`[...document.querySelectorAll('.feedback button')].map(b=>b.textContent).join('/')`)) === "Tak/Nie", "oceny: przyciski Tak/Nie");
+    check(!(await evaluate(`/\\p{Extended_Pictographic}/u.test(document.body.innerText)`)), "bez emoji w interfejsie");
     const live = await evaluate(`document.querySelector('[aria-live=polite][aria-relevant]').children.length`);
     check(live > 2, `region aria-live: ${live} komunikatów (zdania)`);
-    await evaluate(`document.querySelector('.feedback').scrollIntoView({block:'end'})`);
+    await evaluate(`document.querySelector('.answer-actions').scrollIntoView({block:'end'})`);
     await shot("03-zrodla-i-oceny");
     const stored = await evaluate(`JSON.parse(sessionStorage.getItem('usbot.conversation')||'[]').length`);
     check(stored === 1, "rozmowa w sessionStorage");
     await load();
     check(await evaluate(`document.querySelectorAll('.turn').length === 1`), "rozmowa przetrwała odświeżenie");
+  },
+  async citations() {
+    await viewport(1280, 860);
+    await scheme("light");
+    await load();
+    await newChat();
+    const done = await intercept((requestId) =>
+      send("Fetch.fulfillRequest", {
+        requestId,
+        responseCode: 200,
+        responseHeaders: [{ name: "Content-Type", value: "text/event-stream" }],
+        body: Buffer.from(
+          sse([
+            { type: "sources", sources: CITED_SOURCES },
+            ...CITED_TOKENS.map((text) => ({ type: "token", text })),
+            { type: "done", answer: CITED_TOKENS.join("") },
+          ]),
+        ).toString("base64"),
+      }),
+    );
+    await ask("Jaki jest próg dochodu na stypendium socjalne?");
+    await waitIdle();
+    await done();
+    const bot = `[...document.querySelectorAll('.msg-bot')].at(-1)`;
+    check(!(await evaluate(`${bot}.querySelector('.answer').innerText.includes('Źródła:')`)), "cytowania: bez listy „Źródła:” w tekście");
+    check((await evaluate(`${bot}.querySelectorAll('.answer .cite').length`)) === 3, "cytowania: [4], [2], [3] to przyciski");
+    check(await evaluate(`!!${bot}.querySelector('.callout-warn')?.textContent.includes('ponad rok')`), "ostrzeżenie o starym komunikacie jako osobny blok");
+    check(!(await evaluate(`${bot}.querySelector('.answer').innerText.includes('Uwaga:')`)), "ostrzeżenie nie powtarza się w tekście");
+    check((await evaluate(`${bot}.querySelectorAll('.sources > .source-list > .source-card').length`)) === 3, "źródła: 3 cytowane na wierzchu");
+    check(await evaluate(`${bot}.querySelector('.sources-more summary').textContent.includes('(1)')`), "źródła: 1 niecytowane zwinięte");
+    check(await evaluate(`${bot}.querySelector('.tag')?.textContent === 'FAQ'`), "źródła: plakietka FAQ");
+    check(await evaluate(`!!${bot}.querySelector('.tag-warn')?.textContent.startsWith('komunikat z 24 marca 2025')`), "źródła: „komunikat z <data>” przy starym komunikacie");
+    // Klik [3] w ostrzeżeniu → przewija, podświetla i przenosi fokus na źródło 3
+    await evaluate(`${bot}.querySelector('.callout-warn .cite').click()`);
+    await sleep(400);
+    check(await evaluate(`!!document.activeElement.closest('li')?.id.endsWith('-src-3')`), "klik [3]: fokus na źródle 3");
+    check(await evaluate(`!!${bot}.querySelector('.is-target')?.id.endsWith('-src-3')`), "klik [3]: źródło podświetlone");
+    await shot("12-cytowania-i-ostrzezenie");
+    await sleep(2200);
+    check(!(await evaluate(`!!document.querySelector('.is-target')`)), "podświetlenie gaśnie po 2 s");
+    await evaluate(`${bot}.querySelector('.sources-more summary').click()`);
+    await sleep(100);
+    check(await evaluate(`${bot}.querySelector('.sources-more').open`), "pozostałe źródła się rozwijają");
+    await evaluate(`[...${bot}.querySelectorAll('button')].find(b=>b.textContent==='Kopiuj odpowiedź').click()`);
+    await sleep(300);
+    check((await evaluate(`${bot}.querySelector('.copy [role=status]').textContent`)) === "Skopiowano.", "kopiowanie: „Skopiowano.”");
+  },
+  async error() {
+    await viewport(1280, 860);
+    await load();
+    await newChat();
+    const done = await intercept((requestId) => send("Fetch.failRequest", { requestId, errorReason: "ConnectionRefused" }));
+    await ask("Jak zapisać się na zajęcia przez USOSweb?");
+    await waitIdle();
+    await done();
+    check(!!(await evaluate(`document.querySelector('.callout-error')?.textContent.includes('Brak połączenia')`)), "błąd połączenia: komunikat");
+    check(await evaluate(`[...document.querySelectorAll('.callout-error button')].some(b=>b.textContent==='Spróbuj ponownie' && !b.disabled)`), "błąd połączenia: „Spróbuj ponownie”");
+    await shot("14-blad-polaczenia");
   },
   async clarify() {
     await viewport(1280, 860);
@@ -210,7 +330,7 @@ const scenarios = {
     await load();
     await newChat();
     await ask("Jak ubiegać się o stypendium socjalne? Opisz dokładnie wszystkie kroki.");
-    await waitFor(`!!document.querySelector('.cursor') && document.querySelector('.answer').textContent.length > 120`, 60000);
+    await waitFor(`!!document.querySelector('.button.stop') && document.querySelector('.answer')?.textContent.length > 120`, 60000);
     await key("Escape", "Escape", 27);
     await waitIdle();
     check(await evaluate(`!!document.querySelector('.note')`), "Esc: odpowiedź przerwana");
@@ -236,6 +356,7 @@ const scenarios = {
     const hint = await evaluate(`document.getElementById('composer-hint').textContent`);
     check(/za (4[0-2]) s/.test(hint), "429: licznik " + hint);
     check(await evaluate(`document.querySelector('.composer button[type=submit]').disabled`), "429: wysyłanie zablokowane");
+    check(await evaluate(`/za 4[0-2] s/.test(document.querySelector('.error button')?.textContent)`), "429: odliczanie na przycisku „Spróbuj ponownie”");
     await shot("08-limit-zapytan");
     listeners.splice(listeners.indexOf(handler), 1);
     await send("Fetch.disable");
@@ -252,18 +373,30 @@ const scenarios = {
     await scheme("light");
   },
   async mobile() {
-    await viewport(390, 844, true);
     await scheme("light");
-    await load();
-    await shot("10-telefon");
+    for (const [w, h] of [[360, 740], [390, 844], [430, 932]]) {
+      await viewport(w, h, true);
+      await load();
+      check(await evaluate(`document.documentElement.scrollWidth <= window.innerWidth`), `telefon ${w} px: bez poziomego przewijania`);
+      check((await evaluate(`document.querySelector('.header').offsetHeight`)) <= 64, `telefon ${w} px: nagłówek w jednym wierszu`);
+      check(await evaluate(`Math.abs(document.querySelector('.disclaimer').getBoundingClientRect().bottom - window.innerHeight) < 2`), `telefon ${w} px: pole pytania przy dolnej krawędzi`);
+      const small = await evaluate(`[...document.querySelectorAll('button:not(.cite), summary, .button-link')].filter(b=>b.offsetParent&&b.getBoundingClientRect().height<44).map(b=>b.textContent.trim().slice(0,20))`);
+      check(small.length === 0, `telefon ${w} px: cele dotyku ≥ 44 px` + (small.length ? ": " + small.join(", ") : ""));
+      if (w === 390) await shot("10-telefon");
+    }
+    await viewport(390, 844, true);
+    await newChat();
+    await shot("15-telefon-powitanie");
     await viewport(1280, 860);
   },
   async zoom() {
     await viewport(1280, 860);
     await load();
+    await openSettings();
     await evaluate(`[...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')==='Powiększ tekst').click()`);
     await evaluate(`[...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')==='Powiększ tekst').click()`);
     await sleep(200);
+    await key("Escape", "Escape", 27);
     const fs = await evaluate(`getComputedStyle(document.documentElement).fontSize`);
     check(fs === "20px", `A+ ×2 → ${fs}`);
     check(await evaluate(`document.documentElement.scrollWidth <= window.innerWidth`), "bez poziomego przewijania przy 125%");

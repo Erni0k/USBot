@@ -3,14 +3,8 @@ import { getHealth, type Health } from "./api";
 import { Composer } from "./components/Composer";
 import { Settings } from "./components/Settings";
 import { TurnView } from "./components/TurnView";
+import { Welcome } from "./components/Welcome";
 import { useChat } from "./useChat";
-
-const EXAMPLES = [
-  "Jak połączyć się z siecią eduroam?",
-  "Jak ubiegać się o stypendium socjalne?",
-  "Jak zalogować się do USOSweb?",
-  "Jakie są godziny otwarcia dziekanatu?",
-];
 
 const CHECK_NAMES: Record<string, string> = {
   database: "baza wiedzy",
@@ -31,7 +25,9 @@ export default function App() {
   // Przewijanie za odpowiedzią — chyba że użytkownik przewinął wyżej, żeby coś przeczytać
   useLayoutEffect(() => {
     const el = log.current;
-    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    if (chat.turns.length === 0) el.scrollTop = 0; // powitanie czytamy od góry
+    else if (stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [chat.turns]);
 
   // Esc zatrzymuje generowanie także poza polem pytania
@@ -57,8 +53,6 @@ export default function App() {
     focusInput();
   };
 
-  const retryBlocked = chat.retryUntil > Date.now();
-
   return (
     <div className="app">
       <a href="#question" className="skip-link">
@@ -66,23 +60,20 @@ export default function App() {
       </a>
       <header className="header">
         <div className="brand">
-          <span className="logo" aria-hidden="true">
-            US
-          </span>
-          <div>
-            <h1>USBot</h1>
-            <p className="tagline">Asystent Uniwersytetu Śląskiego w Katowicach</p>
-          </div>
+          <h1>USBot</h1>
+          <p className="brand-note">nieoficjalny czat o studiach na Uniwersytecie Śląskim</p>
         </div>
-        <Settings />
-        <button
-          type="button"
-          className="button secondary new-chat"
-          onClick={newConversation}
-          disabled={chat.turns.length === 0 && !chat.busy}
-        >
-          Nowa rozmowa
-        </button>
+        <div className="header-actions">
+          <Settings />
+          <button
+            type="button"
+            className="button secondary new-chat"
+            onClick={newConversation}
+            disabled={chat.turns.length === 0 && !chat.busy}
+          >
+            Nowa rozmowa
+          </button>
+        </div>
       </header>
 
       {health && health.status !== "ok" && (
@@ -112,23 +103,7 @@ export default function App() {
           }}
         >
           {chat.turns.length === 0 ? (
-            <section className="welcome" aria-labelledby="welcome-title">
-              <h2 id="welcome-title">W czym mogę pomóc?</h2>
-              <p>
-                Odpowiadam na pytania o studia na Uniwersytecie Śląskim na podstawie stron uczelni
-                (us.edu.pl, usnet, eduroam) i podaję źródła.
-              </p>
-              <h3 className="examples-title">Przykładowe pytania</h3>
-              <ul className="examples">
-                {EXAMPLES.map((q) => (
-                  <li key={q}>
-                    <button type="button" className="example" onClick={() => ask(q)} disabled={chat.busy}>
-                      {q}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
+            <Welcome disabled={chat.busy} onAsk={(q) => void ask(q)} />
           ) : (
             <>
               <h2 className="sr-only">Rozmowa</h2>
@@ -139,7 +114,7 @@ export default function App() {
                     turn={t}
                     isLast={i === chat.turns.length - 1}
                     busy={chat.busy}
-                    retryBlocked={retryBlocked}
+                    retryUntil={chat.retryUntil}
                     onChooseFaculty={(f) => {
                       void ask(f.code);
                       focusInput();

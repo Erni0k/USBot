@@ -439,7 +439,7 @@ przez wyszukanie treści pytania albo usunięcie pliku z danego dnia.
 ### Oceny odpowiedzi (RODO)
 
 Tabela `feedback` (`POST /api/feedback`) działa według tych samych zasad co dziennik rozmów.
-Ocenę wysyła użytkownik świadomie, przyciskiem, a formularz przy 👎 przypomina, by nie
+Ocenę wysyła użytkownik świadomie, przyciskiem, a formularz przy ocenie „Nie” przypomina, by nie
 wpisywać danych osobowych.
 
 | Pole | Treść | Po co |

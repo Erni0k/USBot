@@ -122,7 +122,7 @@
   dla frontendu, nagłówki bezpieczeństwa; dziennik rozmów bez IP z retencją 30 dni;
   przegląd zależności (`pip-audit`) i sekretów.
 - **Strona WWW** (`web/`, Vite + React + TypeScript, [UI/UX](ui-ux.md)): odpowiedź
-  strumieniowana z SSE z przyciskiem „Zatrzymaj”, źródła jako karty, przyciski wydziałów po
+  strumieniowana z SSE z przyciskiem „Zatrzymaj”, klikalne numery źródeł [n] z listą źródeł pod odpowiedzią, przyciski wydziałów po
   `clarify`, historia w `sessionStorage`, komunikaty limitów (`429`/`503`), tryb ciemny i
   dostępność WCAG 2.1 AA (klawiatura, `aria-live` zdaniami, skalowanie tekstu); testy
   Vitest i E2E w headless Chrome.
@@ -132,7 +132,7 @@
 
 ### Niezrealizowane (planowane)
 
-- Endpoint ocen odpowiedzi (`POST /api/feedback`, etap 7A) — przyciski 👍/👎 na stronie WWW
+- Endpoint ocen odpowiedzi (`POST /api/feedback`, etap 7A) — przyciski „Tak”/„Nie” na stronie WWW
   są gotowe, ale wyłączone ([UI/UX](ui-ux.md), 5.3).
 - Część testów z planu (crawler, chunking, ekstrakcja — T01, T06–T10, T14, T15).
 - CI/CD (GitHub Actions) — nieskonfigurowane w obecnej wersji.

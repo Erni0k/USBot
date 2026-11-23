@@ -1,13 +1,14 @@
-import type { ReactNode } from "react";
+import { createContext, Fragment, useContext, type ReactNode } from "react";
 
 /**
  * Mały renderer Markdownu dla odpowiedzi modelu: nagłówki, listy, akapity, bloki kodu,
  * **pogrubienie**, *kursywa*, `kod`, [linki](url) i gołe adresy URL. Buduje elementy
  * Reacta (bez innerHTML), więc tekst z modelu nie może wstrzyknąć HTML-a; linki tylko
- * http(s). Działa też na niedokończonym tekście w trakcie strumieniowania.
+ * http(s). Działa też na niedokończonym tekście w trakcie strumieniowania. Numery źródeł [1]
+ * stają się przyciskami, gdy odpowiedź ma listę źródeł (CiteContext).
  */
-export function Markdown({ text }: { text: string }) {
-  return <>{blocks(dropUnclosed(text))}</>;
+export function Markdown({ text, inlineOnly = false }: { text: string; inlineOnly?: boolean }) {
+  return <>{inlineOnly ? inline(dropUnclosed(text)) : blocks(dropUnclosed(text))}</>;
 }
 
 /** Urwana odpowiedź (strumień, „Zatrzymaj”) może mieć niedomknięte `**` albo `` ` `` —
@@ -81,8 +82,8 @@ function blocks(text: string): ReactNode[] {
   return parseBlocks(text).map((b, i) => {
     switch (b.kind) {
       case "h": {
-        // Nagłówki odpowiedzi są podrzędne wobec nagłówka strony (h1) i dymka
-        const level = Math.min(6, b.level + 2);
+        // Nagłówki odpowiedzi są podrzędne wobec h1 strony, h2 rozmowy i h3 pytania
+        const level = Math.min(6, b.level + 3);
         const Tag = `h${level}` as "h3";
         return (
           <Tag key={i} className="md-h">
@@ -124,7 +125,7 @@ function withBreaks(text: string): ReactNode[] {
 }
 
 const INLINE =
-  /(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(\[[^\]]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()[\]]+)|(\*[^*\s][^*]*\*|_[^_\s][^_]*_)/g;
+  /(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(\[[^\]]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()[\]]+)|(\*[^*\s][^*]*\*|_[^_\s][^_]*_)|(\[\s*\d{1,2}(?:\s*,\s*\d{1,2})*\s*\])/g;
 
 /** `links=false` wewnątrz tekstu linku — <a> nie może zawierać innego <a>. */
 function inline(text: string, prefix = "", links = true): ReactNode[] {
@@ -135,7 +136,7 @@ function inline(text: string, prefix = "", links = true): ReactNode[] {
   for (const m of text.matchAll(INLINE)) {
     const start = m.index ?? 0;
     if (start > last) out.push(text.slice(last, start));
-    const [all, code, bold, link, url, em] = m;
+    const [all, code, bold, link, url, em, cite] = m;
     if (code) out.push(<code key={key()}>{code.slice(1, -1)}</code>);
     else if (bold) out.push(<strong key={key()}>{inline(bold.slice(2, -2), key(), links)}</strong>);
     else if (link) {
@@ -151,6 +152,7 @@ function inline(text: string, prefix = "", links = true): ReactNode[] {
       out.push(<SafeLink key={key()} href={trimmed}>{trimmed}</SafeLink>);
       if (trimmed.length < url.length) out.push(url.slice(trimmed.length));
     } else if (em) out.push(<em key={key()}>{inline(em.slice(1, -1), key(), links)}</em>);
+    else if (cite && links) out.push(<Citation key={key()} numbers={cite.slice(1, -1).split(",").map(Number)} />);
     else out.push(all);
     last = start + all.length;
   }
@@ -165,5 +167,39 @@ function SafeLink({ href, children }: { href: string; children: ReactNode }) {
       {children}
       <span className="sr-only"> (otwiera się w nowej karcie)</span>
     </a>
+  );
+}
+
+/** Źródła odpowiedzi dla numerów [n] w tekście: n = sources[n - 1]. */
+export interface CiteTarget {
+  count: number;
+  title: (n: number) => string;
+  onCite: (n: number) => void;
+}
+export const CiteContext = createContext<CiteTarget | null>(null);
+
+/** [1, 2] — każdy istniejący numer to przycisk przewijający do źródła. */
+function Citation({ numbers }: { numbers: number[] }) {
+  const target = useContext(CiteContext);
+  const valid = target ? numbers.filter((n) => n >= 1 && n <= target.count) : [];
+  if (!target || valid.length === 0) return <>[{numbers.join(", ")}]</>;
+  return (
+    <span className="cite-group">
+      [
+      {valid.map((n, i) => (
+        <Fragment key={n}>
+          {i > 0 && ", "}
+          <button
+            type="button"
+            className="cite"
+            aria-label={`Źródło ${n}: ${target.title(n)}`}
+            onClick={() => target.onCite(n)}
+          >
+            {n}
+          </button>
+        </Fragment>
+      ))}
+      ]
+    </span>
   );
 }

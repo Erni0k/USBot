@@ -6,7 +6,8 @@ import type { Rating, Turn } from "../types";
 let endpointMissing = false; // 404/405 raz — nie próbujemy dalej w tej karcie
 
 /**
- * 👍/👎 pod odpowiedzią. 👍 wysyła ocenę od razu, 👎 najpierw pyta o opcjonalny komentarz.
+ * „Czy ta odpowiedź pomogła? Tak / Nie” pod odpowiedzią. „Tak” wysyła ocenę od razu, „Nie”
+ * najpierw pyta o opcjonalny komentarz.
  * Przy VITE_FEEDBACK_ENABLED=false (albo gdy serwer nie ma POST /api/feedback) przyciski
  * są widoczne, ale wyłączone — z widocznym wyjaśnieniem.
  */
@@ -57,35 +58,33 @@ export function Feedback({ turn, onRate }: { turn: Turn; onRate: (r: Rating) => 
   };
 
   return (
-    <div className="feedback" role="group" aria-label="Oceń odpowiedź">
-      <span className="feedback-label" aria-hidden="true">
-        Pomocna odpowiedź?
+    <div className="feedback" role="group" aria-labelledby={`feedback-label-${turn.id}`}>
+      <span className="feedback-label" id={`feedback-label-${turn.id}`}>
+        Czy ta odpowiedź pomogła?
       </span>
       <button
         type="button"
-        className="icon-button"
-        aria-label="Pomocna"
+        className="button secondary"
         aria-pressed={turn.rating === "up"}
         disabled={disabled}
         onClick={() => rate("up")}
       >
-        <span aria-hidden="true">👍</span>
+        Tak
       </button>
       <button
         ref={downButton}
         type="button"
-        className="icon-button"
-        aria-label="Niepomocna"
+        className="button secondary"
         aria-pressed={turn.rating === "down"}
         aria-expanded={commenting}
         disabled={disabled}
         onClick={() => setCommenting(true)}
       >
-        <span aria-hidden="true">👎</span>
+        Nie
       </button>
       <span className="feedback-note" role="status">
         {turn.rating
-          ? "Dziękujemy za ocenę."
+          ? "Dziękuję za ocenę."
           : state === "unavailable"
             ? "Oceny są teraz niedostępne."
             : state === "error"

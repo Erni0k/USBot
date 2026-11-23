@@ -50,19 +50,22 @@ export function useChat() {
       setTurns(next);
 
       announcer.reset();
-      announcer.say("Szukam odpowiedzi…");
+      announcer.say("Szukam na stronach uczelni…");
 
       const onEvent = (ev: ChatEvent) => {
         switch (ev.type) {
           case "sources":
             update(id, (t) => ({ ...t, status: "writing", sources: ev.sources }));
             announcer.say(
-              ev.sources.length === 1 ? "Znaleziono 1 źródło. Piszę odpowiedź…" : `Znaleziono źródła: ${ev.sources.length}. Piszę odpowiedź…`,
+              ev.sources.length === 1
+                ? "Znalazłem 1 stronę. Piszę odpowiedź…"
+                : `Znalazłem strony: ${ev.sources.length}. Piszę odpowiedź…`,
             );
             break;
           case "token":
             update(id, (t) => ({ ...t, answer: t.answer + ev.text }));
-            announcer.stream(ev.text);
+            // Ostatni token kończy się listą „Źródła:” z adresami — jest pod odpowiedzią, nie czytamy adresów
+            announcer.stream(ev.text.replace(/\n*Źródła:\n[\s\S]*$/, ""));
             break;
           case "refused":
             update(id, (t) => ({ ...t, status: "refused", answer: ev.message }));
