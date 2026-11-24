@@ -19,8 +19,9 @@ bez `innerHTML`, więc tekst z modelu nie może wstrzyknąć HTML-a, a linki są
 **Styl.** Spokojny, „redakcyjny” wygląd serwisu publicznego, a nie aplikacji czatowej:
 treść wyrównana do lewej w kolumnie ok. 70 znaków, hierarchię robią rozmiar i grubość
 fontu, a nie kolory i ozdobniki; jeden akcent (bordo) dla linków, przycisku głównego i
-numerów źródeł, reszta neutralna; linie i odstępy zamiast kart i cieni; jedno małe
-zaokrąglenie (4 px) dla kontrolek. Fonty systemowe (Segoe UI, San Francisco, Roboto) —
+numerów źródeł, reszta neutralna; odstępy i wypełnione szare przyciski zamiast ramek i
+kart; zaokrąglenie 8 px dla kontrolek i 14 px dla elementów leżących nad rozmową (pole
+pytania, panel ustawień) — tylko one mają cień. Fonty systemowe (Segoe UI, San Francisco, Roboto) —
 zero bajtów do pobrania, bez zewnętrznych CDN. Bez logo i znaków UŚ: to projekt
 studencki, nie oficjalny serwis uczelni (mówi o tym nagłówek i ekran powitalny).
 
@@ -32,7 +33,8 @@ przeglądarki od 2024 r.).
 | Token | Jasny | Ciemny | Do czego |
 |---|---|---|---|
 | `--bg` | `#ffffff` | `#17191c` | tło strony |
-| `--bg-subtle` | `#f3f2f1` | `#22252a` | pytanie (nagłówek tury), kod |
+| `--bg-subtle` / `--bg-hover` | `#f3f2f1` / `#e9e8e6` | `#22252a` / `#2c3036` | przyciski drugorzędne, przykładowe pytania, bloki stanu / tło pod kursorem |
+| `--accent-subtle` | `#f6e9eb` | `#3a2428` | numer źródła, wskazane źródło, wciśnięte „Tak”/„Nie” |
 | `--text` | `#1d1f23` | `#e8e9eb` | tekst |
 | `--text-muted` | `#545961` | `#a9aeb6` | metadane, podpowiedzi |
 | `--line` / `--border` | `#d6d9de` / `#767b84` | `#3a3e45` / `#868b94` | linie dekoracyjne / obramowania pól i przycisków |
@@ -51,8 +53,8 @@ Układ strony od góry:
 |---|---|
 | Nagłówek | **USBot** i dopisek „nieoficjalny czat o studiach na Uniwersytecie Śląskim”; przyciski **Ustawienia** (rozwija panel: motyw — jak w systemie / jasny / ciemny — i rozmiar tekstu A− / A+, 87,5–150%) i **Nowa rozmowa** |
 | Baner stanu | tylko gdy `GET /api/health` przy otwarciu strony zgłasza problem — „Czat może teraz nie działać. Niedostępne: model językowy…” z przyciskiem „Sprawdź ponownie” |
-| Rozmowa | ekran powitalny albo lista tur: pytanie jako nagłówek tury (szare tło), pod nim odpowiedź, ostrzeżenie, źródła, „Kopiuj odpowiedź” i ocena |
-| Pole pytania | przy dolnej krawędzi; rośnie razem z tekstem (do 12rem), **Wyślij** — w trakcie odpowiedzi zamieniony na **Zatrzymaj**; licznik znaków dopiero od 1800 z 2000 |
+| Rozmowa | ekran powitalny albo lista tur: pytanie jako nagłówek tury (większy, pogrubiony), pod nim odpowiedź, ostrzeżenie, źródła, „Kopiuj odpowiedź” i ocena |
+| Pole pytania | karta z cieniem przy dolnej krawędzi (tekst rozmowy wygasa nad nią); rośnie razem z tekstem (do 12rem); przycisk ze strzałką (nazwa „Wyślij”) — w trakcie odpowiedzi zamieniony na **Zatrzymaj**; licznik znaków dopiero od 1800 z 2000 |
 | Stopka | stały komunikat **„Bot może się mylić – sprawdź źródło. Nie wpisuj danych osobowych.”** i informacja o zapisywaniu pytań bez adresu IP przez 30 dni (RODO — Architektura, 2.4) |
 
 **Ekran powitalny** (`web/src/components/Welcome.tsx`): tytuł „Pytania o studia na
@@ -60,7 +62,7 @@ Uniwersytecie Śląskim”, dwa zdania o tym, skąd bot bierze odpowiedzi i czeg
 (USOS, dane osobowe), oraz 8 przykładowych pytań w grupach: Dziekanat, USOSweb, Stypendia,
 Akademiki, Sieć i konta. Pytania są z zestawów testowych (`evaluation/`), więc baza ma na
 nie odpowiedź; „Kiedy jest otwarty dziekanat?” pokazuje dopytanie o wydział. Pytania to
-lista przycisków wyglądających jak linki, nie kafelki.
+lista wierszy z szarym tłem pod nagłówkami grup (pod kursorem ciemniejsze, tekst w akcencie).
 
 ## 5.2 Opis nawigacji
 
@@ -254,7 +256,7 @@ kontrast policzony ze wzoru WCAG dla tokenów, resztę sprawdza e2e (5.5).
   do `docs/img/ui/`. Wynik z 2026-11-24: wszystkie scenariusze OK.
 
 **Rozmiar.** Zbudowany JS + CSS (gzip): przed zmianami z 5.7 — 76,8 KB + 3,0 KB, po —
-79,3 KB + 3,9 KB (+3,3 KB). Bez nowych zależności.
+79,3 KB + 3,9 KB (+3,3 KB), po drugiej iteracji — 79,6 KB + 4,3 KB (+4,1 KB). Bez nowych zależności.
 
 ## 5.6 Terminal (CLI) — stany
 
@@ -329,8 +331,8 @@ Po odpowiedzi bot szuka z pełną nazwą wydziału i odpowiada już przez LLM-a.
 - *Zmienione:* logo „US”; nagłówek „W czym mogę pomóc?”; kafelki z cieniem (powitanie,
   źródła); emoji 👍/👎 i „■” w „Zatrzymaj”; etykieta „ŹRÓDŁA” wersalikami; migający
   kursor-blok; niebieski dymek pytania; puste kółka w listach odpowiedzi.
-- *Zostaje, z uzasadnieniem:* szare tło pytania — odróżnia pytanie od odpowiedzi bez
-  dymków, ma ten sam promień co kontrolki; plakietki tylko przy FAQ i starym komunikacie —
+- *Zostaje, z uzasadnieniem:* pytanie jako większy nagłówek — odróżnia je od odpowiedzi
+  bez dymków; plakietki tylko przy FAQ i starym komunikacie —
   niosą informację, nie są przy każdym elemencie; pasek postępu przy „Szukam…” — jedyna
   animacja, wyłączana przy `prefers-reduced-motion`; obwódka fokusu żółto-czarna —
   sprawdzony w serwisach publicznych wzorzec dostępności, nie ozdobnik; pierwsza osoba
@@ -341,3 +343,22 @@ Po odpowiedzi bot szuka z pełną nazwą wydziału i odpowiada już przez LLM-a.
 ![Przed: źródła w tekście i karty](img/ui/przed/05-zrodla.png)
 
 ![Przed: telefon](img/ui/przed/10-telefon.png)
+
+### Druga iteracja: „nowocześniej, spokojnie” (2026-11-24)
+
+Po pierwszej wersji interfejs był czytelny, ale za surowy (dużo bieli, ramek i podkreśleń).
+Druga iteracja zostawia układ, kolory i treści, a zmienia detale:
+
+| Było | Jest | Dlaczego |
+|---|---|---|
+| Przyciski z ramką, promień 4 px | przyciski drugorzędne wypełnione szarym, bez ramki; promień 8 px | lżej, mniej linii na ekranie |
+| Pole pytania jako płaski pasek z linią nad nim | karta z cieniem i promieniem 14 px, przycisk ze strzałką w środku; fokus obejmuje całą kartę; tekst rozmowy wygasa nad nią | pole wygląda na miejsce do pisania, a rozmowa nie urywa się na krawędzi |
+| Pytanie w szarym prostokącie | pytanie jako większy, ciaśniejszy nagłówek (1,375rem, 650) | hierarchię robi typografia |
+| Źródła jako lista z liniami, podkreślone tytuły | cały wiersz klikalny z tłem pod kursorem, numer w małym bordowym kwadracie, tytuł bez podkreślenia | spokojniejsza lista, większy cel kliknięcia |
+| Przykładowe pytania jako podkreślone linki | wiersze z szarym tłem pod nagłówkami grup | wyraźnie widać, że można je kliknąć |
+| „Kopiuj odpowiedź” jako link | przycisk z ikoną kopiowania, tło dopiero pod kursorem | jedyna ikona przy akcji pod odpowiedzią |
+| Sam napis „USBot” | mały bordowy znak (ten sam co favicon) przy nazwie | rozpoznawalna karta przeglądarki i nagłówek, bez znaków UŚ |
+
+Cień mają tylko pole pytania i panel ustawień, czyli elementy leżące nad rozmową. Przejścia
+kolorów (120 ms) są wyłączane przy `prefers-reduced-motion`. Rozmiar po zmianie: JS + CSS
+79,6 KB + 4,3 KB (gzip), łącznie +4,1 KB od stanu sprzed pierwszej iteracji.

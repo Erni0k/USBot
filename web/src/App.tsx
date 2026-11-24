@@ -60,7 +60,13 @@ export default function App() {
       </a>
       <header className="header">
         <div className="brand">
-          <h1>USBot</h1>
+          <h1>
+            <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+              <rect width="32" height="32" rx="7" fill="var(--accent)" />
+              <path d="M9 11h14M9 16h14M9 21h9" stroke="var(--on-accent)" strokeWidth="2.6" strokeLinecap="round" />
+            </svg>
+            USBot
+          </h1>
           <p className="brand-note">nieoficjalny czat o studiach na Uniwersytecie Śląskim</p>
         </div>
         <div className="header-actions">

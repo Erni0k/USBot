@@ -10,13 +10,15 @@
   /* kolory (jasny, ciemny); kontrast na --bg */
   --bg: light-dark(#ffffff, #17191c);
   --bg-subtle: light-dark(#f3f2f1, #22252a);
+  --bg-hover: light-dark(#e9e8e6, #2c3036); /* tło pod kursorem: przyciski, wiersze źródeł */
+  --shadow-color: light-dark(rgb(29 31 35 / 10%), rgb(0 0 0 / 45%));
   --text: light-dark(#1d1f23, #e8e9eb); /* 16.5:1 / 14.5:1 */
   --text-muted: light-dark(#545961, #a9aeb6); /* 7.1:1 / 7.9:1, na --bg-subtle 6.3 / 6.9 */
   --line: light-dark(#d6d9de, #3a3e45); /* linie dekoracyjne */
   --border: light-dark(#767b84, #868b94); /* pola i przyciski: 4.3:1 / 5.2:1 */
   --accent: light-dark(#8b1e2e, #eb9aa5); /* jedyny akcent: linki, przycisk główny, [n]; 9.0 / 8.1 */
   --accent-hover: light-dark(#6c1623, #f4bcc4);
-  --accent-subtle: light-dark(#f6e9eb, #3a2428); /* tło wskazanego źródła */
+  --accent-subtle: light-dark(#f6e9eb, #3a2428); /* numer źródła, wskazane źródło; akcent na nim 8.1 / 7.0 */
   --on-accent: light-dark(#ffffff, #17191c);
   --warn: light-dark(#a35a00, #e0a650); /* 5.2 / 8.2 */
   --warn-bg: light-dark(#fdf3e1, #2e2513);
@@ -33,8 +35,12 @@
   --space-6: 2rem;
   --space-7: 3rem;
 
-  /* kształt: jeden mały promień dla kontrolek; bloki treści bez zaokrągleń i bez cieni */
-  --radius: 0.25rem;
+  /* kształt: promień kontrolek i większy dla elementów „nad” treścią (pole pytania, panel);
+     cień tylko tam, gdzie coś faktycznie leży nad rozmową */
+  --radius: 0.5rem;
+  --radius-lg: 0.875rem;
+  --shadow-float: 0 1px 2px var(--shadow-color), 0 6px 20px var(--shadow-color);
+  --ease: 120ms ease-out;
   --border-width: 1px;
   --rule: var(--border-width) solid var(--line);
 
@@ -47,7 +53,7 @@
   --fs-body: 1.0625rem; /* treść odpowiedzi */
   --fs-lg: 1.125rem;
   --fs-xl: 1.375rem;
-  --fs-2xl: 1.75rem;
+  --fs-2xl: 2rem;
   --lh: 1.6;
   --lh-tight: 1.3;
 
@@ -169,14 +175,23 @@ a:hover {
 .brand {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 0 var(--space-3);
   margin: 0 auto 0 0;
 }
 .brand h1 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin: 0;
   font-size: var(--fs-lg);
   font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.brand-mark {
+  width: 1.375rem;
+  height: 1.375rem;
+  flex-shrink: 0;
 }
 .brand-note {
   margin: 0;
@@ -230,6 +245,15 @@ a:hover {
 }
 
 .button,
+.button-link,
+.example,
+.faculty-button,
+.source-card,
+.sources-more > summary {
+  transition: background-color var(--ease), color var(--ease), border-color var(--ease);
+}
+
+.button,
 .button-link {
   display: inline-flex;
   align-items: center;
@@ -251,16 +275,32 @@ a:hover {
 .button.primary:hover:not(:disabled) {
   background: var(--accent-hover);
 }
+/* Przycisk drugorzędny: wypełniony szarym, bez ramki (nazwa w tekście wystarcza) */
 .button.secondary,
 .button-link {
-  background: var(--bg);
+  background: var(--bg-subtle);
   color: var(--text);
-  border-color: var(--border);
 }
 .button.secondary:hover:not(:disabled),
 .button-link:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+/* Przycisk tekstowy z tłem dopiero pod kursorem */
+.button.ghost {
+  padding-inline: var(--space-3);
+  background: none;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.button.ghost:hover:not(:disabled) {
   background: var(--bg-subtle);
   color: var(--text);
+}
+.button svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex-shrink: 0;
 }
 /* Akcja tekstowa — wygląda jak link, ma rozmiar przycisku */
 .button.quiet {
@@ -277,30 +317,31 @@ a:hover {
   text-decoration-thickness: 2px;
 }
 .button.stop {
-  background: var(--bg);
-  color: var(--text);
-  border-color: var(--text);
+  background: var(--text);
+  color: var(--bg);
 }
 .button.stop:hover {
-  background: var(--bg-subtle);
+  background: var(--text-muted);
 }
 .button:disabled {
   cursor: not-allowed;
   background: var(--bg-subtle);
   color: var(--text-muted);
-  border-color: var(--line);
+  opacity: 0.7;
 }
 .button.quiet:disabled {
   background: none;
   text-decoration: none;
 }
-.button[aria-pressed="true"] {
-  background: var(--bg-subtle);
-  border-color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--text);
+.button[aria-pressed="true"],
+.button[aria-pressed="true"]:disabled {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: var(--accent);
+  opacity: 1;
 }
 
-.chevron {
+.button .chevron {
   width: 0.75em;
   height: 0.75em;
   transition: transform 0.15s;
@@ -327,8 +368,9 @@ a:hover {
   max-width: calc(100vw - 2 * var(--gutter));
   padding: var(--space-4);
   background: var(--bg);
-  border: var(--border-width) solid var(--border);
-  border-radius: var(--radius);
+  border: var(--border-width) solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
 }
 .settings-panel[hidden] {
   display: none;
@@ -379,10 +421,11 @@ a:hover {
   max-width: var(--measure);
 }
 .welcome h2 {
-  margin: var(--space-4) 0 var(--space-3);
+  margin: var(--space-5) 0 var(--space-3);
   font-size: var(--fs-2xl);
   font-weight: 700;
-  letter-spacing: -0.01em;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
 }
 .lead {
   margin: 0 0 var(--space-6);
@@ -391,10 +434,8 @@ a:hover {
 }
 .examples-title {
   margin: 0 0 var(--space-3);
-  padding-bottom: var(--space-2);
   font-size: var(--fs-md);
   font-weight: 700;
-  border-bottom: var(--rule);
 }
 .example-groups {
   display: grid;
@@ -402,33 +443,35 @@ a:hover {
   gap: var(--space-4) var(--space-6);
 }
 .example-group h4 {
-  margin: var(--space-2) 0 0;
+  margin: var(--space-2) 0 var(--space-2);
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-muted);
 }
 .example-group ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
   list-style: none;
   margin: 0;
   padding: 0;
 }
+/* Pytanie do kliknięcia: wiersz z delikatnym tłem, pod kursorem ciemniejszy i w akcencie */
 .example {
   display: block;
   width: 100%;
   min-height: var(--target);
-  padding: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
   border: 0;
-  background: none;
-  color: var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  color: var(--text);
   text-align: left;
   line-height: 1.4;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.18em;
 }
 .example:hover:not(:disabled) {
-  color: var(--accent-hover);
-  text-decoration-thickness: 2px;
+  background: var(--bg-hover);
+  color: var(--accent);
 }
 .example:disabled {
   cursor: not-allowed;
@@ -453,7 +496,7 @@ a:hover {
   gap: var(--space-4);
 }
 .turn + .turn {
-  margin-top: var(--space-6);
+  margin-top: var(--space-7);
   padding-top: var(--space-6);
   border-top: var(--rule);
 }
@@ -463,14 +506,13 @@ a:hover {
   overflow-wrap: anywhere;
 }
 
-/* Pytanie jest nagłówkiem tury */
+/* Pytanie jest nagłówkiem tury: większe i ciaśniejsze niż treść, bez tła */
 .msg-user {
   margin: 0;
-  padding: var(--space-2) var(--space-4);
-  background: var(--bg-subtle);
-  border-radius: var(--radius);
-  font-size: var(--fs-lg);
-  font-weight: 600;
+  font-size: var(--fs-xl);
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
   white-space: pre-wrap;
 }
 .msg-text {
@@ -599,6 +641,8 @@ a:hover {
   max-width: var(--measure);
   padding: var(--space-3) var(--space-4);
   border-left: 4px solid var(--border);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--bg-subtle);
 }
 .callout > * {
   margin: 0;
@@ -623,6 +667,17 @@ a:hover {
 .callout .button-link {
   margin-top: var(--space-3);
 }
+/* Na szarym tle bloku przycisk drugorzędny jest biały, żeby nie zlał się z tłem */
+.callout .button.secondary,
+.callout .button-link,
+.banner .button.secondary {
+  background: var(--bg);
+}
+.callout .button.secondary:hover:not(:disabled),
+.callout .button-link:hover,
+.banner .button.secondary:hover {
+  background: var(--bg-hover);
+}
 
 /* ---------- dopytanie o wydział ---------- */
 
@@ -640,20 +695,20 @@ a:hover {
   min-height: var(--target);
   padding: var(--space-2) var(--space-3);
   text-align: left;
-  background: var(--bg);
+  background: var(--bg-subtle);
   color: var(--text);
-  border: var(--border-width) solid var(--border);
+  border: 0;
   border-radius: var(--radius);
   line-height: var(--lh-tight);
 }
 .faculty-button:hover:not(:disabled) {
-  background: var(--bg-subtle);
-  border-color: var(--text);
+  background: var(--bg-hover);
+  color: var(--accent);
 }
 .faculty-button:disabled {
   cursor: not-allowed;
   color: var(--text-muted);
-  border-color: var(--line);
+  opacity: 0.7;
 }
 .faculty-code {
   flex-shrink: 0;
@@ -666,40 +721,51 @@ a:hover {
 
 .sources {
   max-width: var(--measure);
-  padding-top: var(--space-3);
-  border-top: var(--rule);
 }
 .sources-title {
   margin: 0 0 var(--space-2);
-  font-size: var(--fs-md);
-  font-weight: 700;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-muted);
 }
 .source-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
+/* Wiersz źródła: cały klikalny (link rozciągnięty ::after), tło pod kursorem */
 .source-card {
+  position: relative;
   display: grid;
-  grid-template-columns: 1.75rem 1fr;
-  gap: 0 var(--space-2);
-  padding: var(--space-2) var(--space-2) var(--space-2) 0;
+  grid-template-columns: 1.5rem 1fr;
+  gap: 0 var(--space-3);
+  margin-inline: calc(-1 * var(--space-2));
+  padding: var(--space-2);
+  border-radius: var(--radius);
   scroll-margin: var(--space-6);
-  transition: background-color 0.6s;
 }
-.source-card + .source-card {
-  border-top: var(--rule);
+.source-card:hover {
+  background: var(--bg-subtle);
 }
 .source-card.is-target {
   background: var(--accent-subtle);
-  transition: none;
+}
+.source-card:has(.source-link:focus-visible) {
+  outline: 3px solid var(--focus-outer);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--focus-inner);
 }
 .source-num {
-  padding-left: var(--space-1);
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.375rem;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: var(--fs-xs);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-  text-align: right;
 }
 .source-body {
   min-width: 0;
@@ -708,6 +774,24 @@ a:hover {
 .source-name {
   font-weight: 600;
   line-height: var(--lh-tight);
+  color: var(--text);
+}
+.source-link {
+  text-decoration: none;
+}
+.source-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.source-card:hover .source-link {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.source-link:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 .source-meta {
   display: flex;
@@ -719,11 +803,11 @@ a:hover {
   color: var(--text-muted);
 }
 .tag {
-  padding: 0 var(--space-1);
-  border: var(--border-width) solid var(--border);
-  border-radius: var(--radius);
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid var(--line);
+  border-radius: 999px;
   font-size: var(--fs-xs);
-  line-height: 1.5;
+  line-height: 1.6;
 }
 .tag-warn {
   border-color: var(--warn);
@@ -740,12 +824,13 @@ a:hover {
   gap: var(--space-2);
   list-style: none;
   min-height: var(--target);
+  margin-inline: calc(-1 * var(--space-2));
+  padding-inline: var(--space-2);
+  border-radius: var(--radius);
   cursor: pointer;
-  color: var(--accent);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
   font-weight: 600;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.18em;
 }
 .sources-more > summary::-webkit-details-marker {
   display: none;
@@ -761,7 +846,8 @@ a:hover {
   transform: rotate(90deg);
 }
 .sources-more > summary:hover {
-  color: var(--accent-hover);
+  background: var(--bg-subtle);
+  color: var(--text);
 }
 .sources-more[open] > summary {
   margin-bottom: var(--space-1);
@@ -774,6 +860,7 @@ a:hover {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) var(--space-5);
+  margin-inline-start: calc(-1 * var(--space-3));
   max-width: var(--measure);
   font-size: var(--fs-sm);
 }
@@ -799,6 +886,7 @@ a:hover {
 .feedback .button {
   min-width: 3.5rem;
   font-size: var(--fs-sm);
+  border: var(--border-width) solid transparent;
 }
 .feedback-note:empty {
   display: none;
@@ -837,15 +925,40 @@ a:hover {
 
 /* ---------- pole pytania ---------- */
 
+/* Pole pytania: karta „nad” rozmową, z cieniem; fokus obejmuje całą kartę */
 .composer {
-  padding-block: var(--space-3) var(--space-2);
-  border-top: var(--rule);
+  position: relative;
+  padding-block: var(--space-2);
   background: var(--bg);
+}
+/* Tekst rozmowy wygasa nad polem zamiast urywać się na krawędzi */
+.composer::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 100%;
+  height: var(--space-5);
+  background: linear-gradient(to bottom, transparent, var(--bg));
+  pointer-events: none;
 }
 .composer-box {
   display: flex;
   align-items: flex-end;
   gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+  background: var(--bg);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+}
+.composer-box:has(textarea:focus-visible) {
+  outline: 3px solid var(--focus-outer);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--focus-inner), var(--shadow-float);
+}
+.composer-box:has(textarea[aria-invalid="true"]) {
+  border-color: var(--danger);
+  box-shadow: inset 0 0 0 1px var(--danger), var(--shadow-float);
 }
 .composer textarea {
   flex: 1;
@@ -853,21 +966,24 @@ a:hover {
   min-height: var(--target);
   max-height: 12rem;
   overflow-y: auto;
-  padding: calc(var(--space-2) + 1px) var(--space-3);
+  padding: var(--space-2) 0;
   resize: none;
   font: inherit;
   line-height: 1.5;
   color: var(--text);
-  background: var(--bg);
-  border: var(--border-width) solid var(--border);
-  border-radius: var(--radius);
+  background: none;
+  border: 0;
+}
+.composer textarea:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.composer .button.send {
+  width: var(--target);
+  padding: 0;
 }
 .composer textarea::placeholder {
   color: var(--text-muted);
-}
-.composer textarea[aria-invalid="true"] {
-  border-color: var(--danger);
-  box-shadow: inset 0 0 0 1px var(--danger);
 }
 .composer-footer {
   display: flex;
@@ -875,7 +991,8 @@ a:hover {
   justify-content: space-between;
   gap: var(--space-1) var(--space-4);
   min-height: 1.25rem;
-  margin-top: var(--space-1);
+  margin-top: var(--space-2);
+  padding-inline: var(--space-1);
   font-size: var(--fs-xs);
   color: var(--text-muted);
 }
@@ -892,7 +1009,7 @@ kbd {
   font-size: 0.95em;
   padding: 0 0.3em;
   border: var(--border-width) solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 0.25rem;
 }
 
 /* ---------- stały disclaimer ---------- */
@@ -905,6 +1022,7 @@ kbd {
 }
 .disclaimer p {
   margin: 0;
+  padding-inline: var(--space-1);
   max-width: none;
 }
 .disclaimer strong {
@@ -948,7 +1066,7 @@ kbd {
     padding-top: var(--space-5);
   }
   .msg-user {
-    font-size: var(--fs-md);
+    font-size: var(--fs-lg);
   }
   .answer {
     font-size: var(--fs-md);
@@ -995,16 +1113,23 @@ kbd {
   }
   .source-card,
   .chevron,
-  .sources-more > summary::before {
+  .sources-more > summary::before,
+  .button,
+  .button-link,
+  .example,
+  .faculty-button,
+  .sources-more > summary {
     transition: none;
   }
 }
 
 /* Wymuszone kolory (tryb wysokiego kontrastu Windows) */
 @media (forced-colors: active) {
-  .msg-user,
   .callout,
-  .settings-panel {
+  .settings-panel,
+  .example,
+  .faculty-button,
+  .button.secondary {
     border: 1px solid CanvasText;
   }
   .indicator::after {

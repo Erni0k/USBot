@@ -73,11 +73,16 @@ export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer
         />
         {busy ? (
           <button type="button" className="button stop" onClick={onStop}>
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor" />
+            </svg>
             Zatrzymaj
           </button>
         ) : (
-          <button type="submit" className="button primary" disabled={!canSend}>
-            Wyślij
+          <button type="submit" className="button primary send" disabled={!canSend} aria-label="Wyślij" title="Wyślij (Enter)">
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         )}
       </div>
